@@ -1,0 +1,64 @@
+/* Estilos personalizados y utilidades de soporte */
+
+/* Scrollbars personalizadas estilo glass */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(51, 65, 85, 0.8);
+    border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(2, 132, 199, 0.8);
+}
+
+/* Animaciones de pulsación de estado */
+@keyframes statusGlow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.05); }
+}
+
+.animate-status-glow {
+    animation: statusGlow 2s infinite ease-in-out;
+}
+
+/* Modo Kiosco */
+body.kiosk-mode {
+    padding: 0;
+    overflow: hidden;
+}
+
+body.kiosk-mode header {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+}
+
+body.kiosk-mode #app {
+    max-width: 100% !important;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
+/* Animación Toast */
+.toast-enter {
+    animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
