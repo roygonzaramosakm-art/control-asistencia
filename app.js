@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadConfig();
     refreshAllData();
 
-    // Event listeners
+    // Event listeners: INSTANT zero-delay search
     searchInput.addEventListener('input', handleSearch);
     searchInput.addEventListener('focus', handleSearch);
 
@@ -40,8 +40,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Auto-refresh data every 15 seconds
-    setInterval(refreshAllData, 15000);
+    // Auto-refresh data every 30 seconds in background
+    setInterval(refreshAllData, 30000);
 });
 
 // Live Clock
@@ -120,10 +120,11 @@ function updateSheetsStatusBadge() {
     }
 }
 
-async function loadEmployees(query = '') {
-    // 1. Try local API if available
+// Carga inicial y almacenamiento en memoria
+async function loadEmployees() {
+    // 1. Probamos backend local si está disponible
     try {
-        const res = await fetch(`/api/empleados${query ? '?q=' + encodeURIComponent(query) : ''}`);
+        const res = await fetch('/api/empleados');
         if (res.ok) {
             const data = await res.json();
             state.allEmployees = data;
@@ -131,8 +132,8 @@ async function loadEmployees(query = '') {
         }
     } catch (err) {}
 
-    // 2. Fallback to Direct Google Sheets mode (GitHub Pages compatible)
-    if (!state.sheetsUrl) return filterEmployeesInMemory(query);
+    // 2. Direct Google Sheets mode (Almacena en memoria para búsqueda ultra-rápida)
+    if (!state.sheetsUrl) return state.allEmployees;
 
     try {
         const res = await fetch(`${state.sheetsUrl}?action=get_personal`);
@@ -144,26 +145,31 @@ async function loadEmployees(query = '') {
                 empresa: p.empresa || 'INTERNO',
                 estado_hoy: 'FUERA'
             }));
-            return filterEmployeesInMemory(query);
         }
     } catch (err) {
-        console.error("Error cargando empleados directamente de Google Sheets:", err);
+        console.error("Error cargando empleados de Google Sheets:", err);
     }
-    return filterEmployeesInMemory(query);
+    return state.allEmployees;
 }
 
+// Búsqueda ultra-rápida e instantánea en memoria (0ms de retraso, insensible a tildes)
 function filterEmployeesInMemory(query = '') {
     if (!query) return state.allEmployees;
-    const q = query.toLowerCase();
-    return state.allEmployees.filter(e => 
-        (e.nombre && e.nombre.toLowerCase().includes(q)) || 
-        (e.dni && e.dni.toLowerCase().includes(q)) || 
-        (e.empresa && e.empresa.toLowerCase().includes(q))
-    );
+    
+    // Normalizar texto eliminando tildes/acentos
+    const normalize = str => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const q = normalize(query.trim());
+
+    return state.allEmployees.filter(e => {
+        const nameMatch = e.nombre && normalize(e.nombre).includes(q);
+        const dniMatch = e.dni && normalize(e.dni).includes(q);
+        const empresaMatch = e.empresa && normalize(e.empresa).includes(q);
+        return nameMatch || dniMatch || empresaMatch;
+    });
 }
 
 async function loadTodayData() {
-    // 1. Try local API first
+    // 1. Backend local
     try {
         const res = await fetch('/api/asistencia/hoy');
         if (res.ok) {
@@ -176,7 +182,7 @@ async function loadTodayData() {
         }
     } catch (err) {}
 
-    // 2. Fallback to Direct Google Sheets mode
+    // 2. Direct Google Sheets
     if (!state.sheetsUrl) return;
 
     try {
@@ -219,15 +225,15 @@ async function loadTodayData() {
     }
 }
 
-// Search & Autocomplete
-async function handleSearch(e) {
+// Búsqueda instantánea en vivo (0 milisegundos de espera)
+function handleSearch(e) {
     const query = e.target.value.trim();
     if (!query) {
         searchResults.classList.add('hidden');
         return;
     }
 
-    const results = await loadEmployees(query);
+    const results = filterEmployeesInMemory(query);
     renderSearchResults(results, query);
 }
 
