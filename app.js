@@ -1,9 +1,11 @@
 // App State
+const DEFAULT_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwKrMZbGko7NkI1VBrLevrbeL5Xuh_r46Yzw13YAR5aRcCncnub2KylXXovOuW0iWmW/exec';
+
 let state = {
     allEmployees: [],
     selectedEmployee: null,
     todayData: { registros_hoy: [], en_turno: [], kpis: {} },
-    sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || ''
+    sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || DEFAULT_SHEETS_URL
 };
 
 // DOM Elements
@@ -98,6 +100,11 @@ async function loadConfig() {
             }
         }
     } catch (e) {}
+
+    if (!state.sheetsUrl) {
+        state.sheetsUrl = DEFAULT_SHEETS_URL;
+        localStorage.setItem('control_asistencia_sheets_url', DEFAULT_SHEETS_URL);
+    }
 
     updateSheetsStatusBadge();
     const input = document.getElementById('sheetsUrlInput');
