@@ -5,7 +5,8 @@ let state = {
     allEmployees: [],
     selectedEmployee: null,
     todayData: { registros_hoy: [], en_turno: [], kpis: {} },
-    sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || DEFAULT_SHEETS_URL
+    sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || DEFAULT_SHEETS_URL,
+    customTimeMode: false
 };
 
 // DOM Elements
@@ -39,6 +40,13 @@ document.addEventListener('DOMContentLoaded', () => {
             searchResults.classList.add('hidden');
         }
     });
+
+    // Preset current time in time inputs
+    const nowStr = new Date().toTimeString().slice(0, 5);
+    const customTimeInput = document.getElementById('customTimeInput');
+    const batchTimeInput = document.getElementById('batchTimeInput');
+    if (customTimeInput) customTimeInput.value = nowStr;
+    if (batchTimeInput) batchTimeInput.value = nowStr;
 
     // Auto-refresh data every 30 seconds in background
     setInterval(refreshAllData, 30000);
@@ -81,6 +89,35 @@ function showToast(message, type = 'info') {
     setTimeout(() => {
         toast.remove();
     }, 4000);
+}
+
+function toggleCustomTimeMode() {
+    const toggle = document.getElementById('useCustomTimeToggle');
+    const currentDisplay = document.getElementById('currentTimeDisplay');
+    const customContainer = document.getElementById('customTimeInputContainer');
+    const customInput = document.getElementById('customTimeInput');
+
+    state.customTimeMode = toggle.checked;
+    if (toggle.checked) {
+        currentDisplay.classList.add('hidden');
+        customContainer.classList.remove('hidden');
+        if (customInput && !customInput.value) {
+            customInput.value = new Date().toTimeString().slice(0, 5);
+        }
+    } else {
+        currentDisplay.classList.remove('hidden');
+        customContainer.classList.add('hidden');
+    }
+}
+
+function getSelectedTime() {
+    const toggle = document.getElementById('useCustomTimeToggle');
+    const customInput = document.getElementById('customTimeInput');
+    
+    if (toggle && toggle.checked && customInput && customInput.value) {
+        return customInput.value + ':00';
+    }
+    return new Date().toLocaleTimeString('es-ES');
 }
 
 async function refreshAllData() {
@@ -319,7 +356,7 @@ function selectEmployee(emp) {
     }
 }
 
-// Marking Actions
+// Marking Actions with Hbrid Time Mode Support
 async function submitCheckIn() {
     if (!state.selectedEmployee) return;
     
@@ -327,18 +364,18 @@ async function submitCheckIn() {
     const notes = recordNotes.value.trim();
     const now = new Date();
     const fecha = now.toISOString().split('T')[0];
-    const hora_ingreso = now.toLocaleTimeString('es-ES');
+    const hora_ingreso = getSelectedTime();
 
     // 1. Try local API
     try {
         const res = await fetch('/api/asistencia/ingreso', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_ingreso: hora_ingreso })
         });
         if (res.ok) {
             playSuccessSound();
-            showToast(`Ingreso registrado: ${state.selectedEmployee.nombre}`, 'success');
+            showToast(`Ingreso registrado (${hora_ingreso}): ${state.selectedEmployee.nombre}`, 'success');
             recordNotes.value = '';
             await refreshAllData();
             return;
@@ -370,7 +407,7 @@ async function submitCheckIn() {
         });
 
         playSuccessSound();
-        showToast(`Ingreso registrado a Google Sheets: ${state.selectedEmployee.nombre}`, 'success');
+        showToast(`Ingreso registrado (${hora_ingreso}): ${state.selectedEmployee.nombre}`, 'success');
         recordNotes.value = '';
         state.selectedEmployee.estado_hoy = 'EN_TURNO';
         state.selectedEmployee.hora_ingreso_hoy = hora_ingreso;
@@ -391,19 +428,19 @@ async function submitCheckOut() {
     const notes = recordNotes.value.trim();
     const now = new Date();
     const fecha = now.toISOString().split('T')[0];
-    const hora_salida = now.toLocaleTimeString('es-ES');
+    const hora_salida = getSelectedTime();
 
     // 1. Try local API
     try {
         const res = await fetch('/api/asistencia/salida', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_salida: hora_salida })
         });
         if (res.ok) {
             const data = await res.json();
             playSuccessSound();
-            showToast(`Salida registrada: ${state.selectedEmployee.nombre}`, 'success');
+            showToast(`Salida registrada (${hora_salida}): ${state.selectedEmployee.nombre}`, 'success');
             recordNotes.value = '';
             await refreshAllData();
             return;
@@ -435,7 +472,7 @@ async function submitCheckOut() {
         });
 
         playSuccessSound();
-        showToast(`Salida registrada a Google Sheets: ${state.selectedEmployee.nombre}`, 'success');
+        showToast(`Salida registrada (${hora_salida}): ${state.selectedEmployee.nombre}`, 'success');
         recordNotes.value = '';
         state.selectedEmployee.estado_hoy = 'FUERA';
         selectEmployee(state.selectedEmployee);
@@ -446,6 +483,73 @@ async function submitCheckOut() {
     } finally {
         btnCheckOut.disabled = false;
     }
+}
+
+// Carga Masiva por Lote (Garita)
+function openBatchModal() {
+    document.getElementById('batchModal').classList.remove('hidden');
+    const input = document.getElementById('batchTimeInput');
+    if (input) input.value = new Date().toTimeString().slice(0, 5);
+}
+
+function closeBatchModal() {
+    document.getElementById('batchModal').classList.add('hidden');
+}
+
+async function submitBatchCheckIn() {
+    const rawTime = document.getElementById('batchTimeInput').value;
+    const rawList = document.getElementById('batchListInput').value.trim();
+
+    if (!rawList) {
+        showToast('Ingresa al menos un DNI o Nombre', 'error');
+        return;
+    }
+
+    const horaIngreso = rawTime ? rawTime + ':00' : new Date().toLocaleTimeString('es-ES');
+    const fecha = new Date().toISOString().split('T')[0];
+    const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    let registeredCount = 0;
+
+    for (const term of lines) {
+        let emp = state.allEmployees.find(e => 
+            (e.dni && e.dni.replace(/\s+/g, '') === term.replace(/\s+/g, '')) || 
+            (e.nombre && e.nombre.toLowerCase().includes(term.toLowerCase()))
+        );
+
+        if (!emp) {
+            // Auto-create new person if DNI/Name is not found
+            emp = {
+                dni: /^\d+$/.test(term) ? term : 'DNI-' + Math.floor(100000 + Math.random() * 900000),
+                nombre: term,
+                empresa: 'INTERNO'
+            };
+        }
+
+        try {
+            await fetch(state.sheetsUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'record_attendance',
+                    dni: emp.dni,
+                    nombre: emp.nombre,
+                    empresa: emp.empresa,
+                    fecha: fecha,
+                    hora_ingreso: horaIngreso,
+                    estado: 'EN_TURNO',
+                    notas: 'Ingreso Masivo Garita'
+                })
+            });
+            registeredCount++;
+        } catch (e) {}
+    }
+
+    showToast(`Carga masiva completada: ${registeredCount} ingresos a las ${horaIngreso}`, 'success');
+    closeBatchModal();
+    document.getElementById('batchListInput').value = '';
+    await refreshAllData();
 }
 
 // Quick Add Modal Trigger from Search
