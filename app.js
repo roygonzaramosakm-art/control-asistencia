@@ -24,6 +24,19 @@ const recordNotes = document.getElementById('recordNotes');
 const btnCheckIn = document.getElementById('btnCheckIn');
 const btnCheckOut = document.getElementById('btnCheckOut');
 
+// Helper to clean time strings from Google Sheets (e.g. Sat Dec 30 1899 17:33:50 GMT -> 17:33:50)
+function cleanTimeString(str) {
+    if (!str) return '';
+    str = String(str).trim();
+    if (str.includes('GMT') || str.includes('1899') || str.includes('T')) {
+        const match = str.match(/\d{1,2}:\d{2}:\d{2}/);
+        if (match) return match[0];
+        const matchShort = str.match(/\d{1,2}:\d{2}/);
+        if (matchShort) return matchShort[0];
+    }
+    return str;
+}
+
 // Initialize on Load
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
@@ -32,12 +45,16 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshAllData();
 
     // Event listeners: INSTANT zero-delay search
-    searchInput.addEventListener('input', handleSearch);
-    searchInput.addEventListener('focus', handleSearch);
+    if (searchInput) {
+        searchInput.addEventListener('input', handleSearch);
+        searchInput.addEventListener('focus', handleSearch);
+    }
 
+    // Hide dropdown when clicking outside
     document.addEventListener('click', (e) => {
-        if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+        if (searchInput && searchResults && !searchInput.contains(e.target) && !searchResults.contains(e.target)) {
             searchResults.classList.add('hidden');
+            searchResults.style.display = 'none';
         }
     });
 
@@ -159,7 +176,6 @@ function updateSheetsStatusBadge() {
 
 // Carga inicial y almacenamiento en memoria
 async function loadEmployees() {
-    // 1. Probamos backend local si está disponible
     try {
         const res = await fetch('/api/empleados');
         if (res.ok) {
@@ -169,7 +185,6 @@ async function loadEmployees() {
         }
     } catch (err) {}
 
-    // 2. Direct Google Sheets mode (Almacena en memoria para búsqueda ultra-rápida)
     if (!state.sheetsUrl) return state.allEmployees;
 
     try {
@@ -177,7 +192,7 @@ async function loadEmployees() {
         const data = await res.json();
         if (data.status === 'success') {
             state.allEmployees = data.data.map(p => ({
-                dni: String(p.dni),
+                dni: String(p.dni).trim(),
                 nombre: p.nombre,
                 empresa: p.empresa || 'INTERNO',
                 estado_hoy: 'FUERA'
@@ -189,11 +204,10 @@ async function loadEmployees() {
     return state.allEmployees;
 }
 
-// Búsqueda ultra-rápida e instantánea en memoria (0ms de retraso, insensible a tildes)
+// Búsqueda ultra-rápida en memoria (insensible a tildes)
 function filterEmployeesInMemory(query = '') {
     if (!query) return state.allEmployees;
     
-    // Normalizar texto eliminando tildes/acentos
     const normalize = str => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const q = normalize(query.trim());
 
@@ -206,7 +220,6 @@ function filterEmployeesInMemory(query = '') {
 }
 
 async function loadTodayData() {
-    // 1. Backend local
     try {
         const res = await fetch('/api/asistencia/hoy');
         if (res.ok) {
@@ -219,7 +232,6 @@ async function loadTodayData() {
         }
     } catch (err) {}
 
-    // 2. Direct Google Sheets
     if (!state.sheetsUrl) return;
 
     try {
@@ -227,17 +239,21 @@ async function loadTodayData() {
         const data = await res.json();
         if (data.status === 'success') {
             const todayStr = new Date().toISOString().split('T')[0];
-            const records = data.data || [];
+            const records = (data.data || []).map(r => ({
+                ...r,
+                hora_ingreso: cleanTimeString(r.hora_ingreso),
+                hora_salida: cleanTimeString(r.hora_salida)
+            }));
             
             const registros_hoy = records.filter(r => r.fecha === todayStr);
             const en_turno = records.filter(r => r.estado === 'EN_TURNO');
 
             // Actualizar estado de empleados en memoria
             state.allEmployees.forEach(emp => {
-                const activeRec = en_turno.find(r => String(r.dni) === String(emp.dni));
+                const activeRec = en_turno.find(r => String(r.dni).trim() === String(emp.dni).trim());
                 if (activeRec) {
                     emp.estado_hoy = 'EN_TURNO';
-                    emp.hora_ingreso_hoy = activeRec.hora_ingreso;
+                    emp.hora_ingreso_hoy = cleanTimeString(activeRec.hora_ingreso);
                 } else {
                     emp.estado_hoy = 'FUERA';
                 }
@@ -262,11 +278,17 @@ async function loadTodayData() {
     }
 }
 
-// Búsqueda instantánea en vivo (0 milisegundos de espera)
+// Búsqueda instantánea en vivo
 function handleSearch(e) {
     const query = e.target.value.trim();
+    const clearBtn = document.getElementById('btnClearSearch');
+    if (clearBtn) {
+        clearBtn.classList.toggle('hidden', !query);
+    }
+
     if (!query) {
         searchResults.classList.add('hidden');
+        searchResults.style.display = 'none';
         return;
     }
 
@@ -274,11 +296,24 @@ function handleSearch(e) {
     renderSearchResults(results, query);
 }
 
+function clearSearch() {
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+    }
+    const clearBtn = document.getElementById('btnClearSearch');
+    if (clearBtn) clearBtn.classList.add('hidden');
+    searchResults.classList.add('hidden');
+    searchResults.style.display = 'none';
+    searchResults.innerHTML = '';
+}
+
 function renderSearchResults(list, query) {
     searchResults.innerHTML = '';
-    searchResults.classList.remove('hidden');
 
     if (list.length === 0) {
+        searchResults.style.display = 'block';
+        searchResults.classList.remove('hidden');
         searchResults.innerHTML = `
             <div class="p-4 text-center">
                 <p class="text-xs text-slate-400">No se encontró personal registrado con "${query}"</p>
@@ -292,13 +327,17 @@ function renderSearchResults(list, query) {
         return;
     }
 
+    searchResults.style.display = 'block';
+    searchResults.classList.remove('hidden');
+
     list.forEach(emp => {
         const item = document.createElement('div');
-        item.className = "p-3.5 hover:bg-slate-800/80 cursor-pointer flex items-center justify-between transition-colors";
+        item.className = "p-3.5 hover:bg-sky-950/80 cursor-pointer flex items-center justify-between transition-colors bg-slate-950 border-b border-slate-800/60";
         
         const isEnTurno = emp.estado_hoy === 'EN_TURNO';
         const badgeBg = isEnTurno ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700';
-        const badgeText = isEnTurno ? `🟢 En Turno (${emp.hora_ingreso_hoy || ''})` : '🔴 Fuera';
+        const cleanTimeDisplay = cleanTimeString(emp.hora_ingreso_hoy);
+        const badgeText = isEnTurno ? `🟢 En Turno (${cleanTimeDisplay})` : '🔴 Fuera';
 
         const isThirdParty = emp.empresa && emp.empresa !== 'INTERNO';
         const empresaBadge = isThirdParty 
@@ -306,7 +345,7 @@ function renderSearchResults(list, query) {
             : `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">Interno</span>`;
 
         item.innerHTML = `
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 pointer-events-none">
                 <div class="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 font-bold text-xs flex items-center justify-center text-sky-400">
                     ${getInitials(emp.nombre)}
                 </div>
@@ -319,20 +358,35 @@ function renderSearchResults(list, query) {
                     </div>
                 </div>
             </div>
-            <span class="px-2.5 py-1 rounded-xl text-[11px] font-semibold border ${badgeBg}">
+            <span class="px-2.5 py-1 rounded-xl text-[11px] font-semibold border ${badgeBg} pointer-events-none">
                 ${badgeText}
             </span>
         `;
 
-        item.onclick = () => selectEmployee(emp);
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            selectEmployee(emp);
+        });
+
         searchResults.appendChild(item);
     });
 }
 
 function selectEmployee(emp) {
     state.selectedEmployee = emp;
+    
+    // Cierra el menú desplegable de inmediato e incondicionalmente
     searchResults.classList.add('hidden');
-    searchInput.value = emp.nombre;
+    searchResults.style.display = 'none';
+    searchResults.innerHTML = '';
+    
+    const clearBtn = document.getElementById('btnClearSearch');
+    if (clearBtn) clearBtn.classList.remove('hidden');
+
+    if (searchInput) {
+        searchInput.value = emp.nombre;
+        searchInput.blur();
+    }
 
     noSelectionPlaceholder.classList.add('hidden');
     activeEmployeeContent.classList.remove('hidden');
@@ -343,9 +397,11 @@ function selectEmployee(emp) {
     empAvatar.textContent = getInitials(emp.nombre);
 
     const isEnTurno = emp.estado_hoy === 'EN_TURNO';
+    const cleanTime = cleanTimeString(emp.hora_ingreso_hoy);
+
     if (isEnTurno) {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-emerald-950/80 text-emerald-300 border border-emerald-500/40";
-        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN PLANTA (DESDE ${emp.hora_ingreso_hoy || ''})</span>`;
+        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN PLANTA (DESDE ${cleanTime})</span>`;
         btnCheckIn.disabled = true;
         btnCheckOut.disabled = false;
     } else {
@@ -356,7 +412,7 @@ function selectEmployee(emp) {
     }
 }
 
-// Marking Actions with Hbrid Time Mode Support
+// Marking Actions with Hybrid Time Mode Support
 async function submitCheckIn() {
     if (!state.selectedEmployee) return;
     
@@ -518,7 +574,6 @@ async function submitBatchCheckIn() {
         );
 
         if (!emp) {
-            // Auto-create new person if DNI/Name is not found
             emp = {
                 dni: /^\d+$/.test(term) ? term : 'DNI-' + Math.floor(100000 + Math.random() * 900000),
                 nombre: term,
@@ -552,9 +607,9 @@ async function submitBatchCheckIn() {
     await refreshAllData();
 }
 
-// Quick Add Modal Trigger from Search
 function triggerQuickAdd(query) {
     searchResults.classList.add('hidden');
+    searchResults.style.display = 'none';
     openNewPersonModal();
     if (/^\d+$/.test(query)) {
         document.getElementById('newDni').value = query;
@@ -597,6 +652,8 @@ function renderActiveList(list) {
             ? `<span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-bold">${item.empresa}</span>`
             : `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">Interno</span>`;
 
+        const cleanTime = cleanTimeString(item.hora_ingreso);
+
         div.innerHTML = `
             <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-xs flex items-center justify-center">
@@ -605,7 +662,7 @@ function renderActiveList(list) {
                 <div>
                     <div class="text-xs font-bold text-white">${item.nombre}</div>
                     <div class="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-400">
-                        <span>Ingreso: <strong class="text-emerald-400 font-mono">${item.hora_ingreso || ''}</strong></span>
+                        <span>Ingreso: <strong class="text-emerald-400 font-mono">${cleanTime || '--'}</strong></span>
                         <span>&bull;</span>
                         ${empTag}
                     </div>
@@ -653,14 +710,17 @@ function renderTable(list) {
             ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">🟢 EN TURNO</span>`
             : `<span class="px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-bold border border-sky-500/30">✅ COMPLETADO</span>`;
 
+        const horaIngresoClean = cleanTimeString(row.hora_ingreso);
+        const horaSalidaClean = cleanTimeString(row.hora_salida);
+
         tr.innerHTML = `
             <td class="px-4 py-3 font-semibold text-white">${row.nombre}</td>
             <td class="px-4 py-3 font-mono text-slate-400">${row.dni}</td>
             <td class="px-4 py-3">
                 <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-bold border border-slate-700">${row.empresa || 'INTERNO'}</span>
             </td>
-            <td class="px-4 py-3 font-mono text-emerald-400 font-bold">${row.hora_ingreso || '--'}</td>
-            <td class="px-4 py-3 font-mono text-amber-400 font-bold">${row.hora_salida || '--'}</td>
+            <td class="px-4 py-3 font-mono text-emerald-400 font-bold">${horaIngresoClean || '--'}</td>
+            <td class="px-4 py-3 font-mono text-amber-400 font-bold">${horaSalidaClean || '--'}</td>
             <td class="px-4 py-3 font-mono text-slate-300">${row.horas_trabajadas || '--'}</td>
             <td class="px-4 py-3">${statusBadge}</td>
             <td class="px-4 py-3 text-slate-400 truncate max-w-xs">${row.notas || '--'}</td>
@@ -698,7 +758,6 @@ async function saveNewPerson() {
         return;
     }
 
-    // 1. Try local API
     try {
         const res = await fetch('/api/empleados', {
             method: 'POST',
@@ -715,7 +774,6 @@ async function saveNewPerson() {
         }
     } catch (e) {}
 
-    // 2. Direct Google Sheets fallback
     if (!state.sheetsUrl) {
         showToast('Configura la URL de Google Sheets primero', 'error');
         return;
