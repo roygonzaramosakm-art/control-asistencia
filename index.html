@@ -44,7 +44,7 @@
                 </div>
                 <div>
                     <h1 class="text-2xl font-bold bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-                        Control de Asistencia
+                        Control de Asistencia AKM
                     </h1>
                     <p class="text-xs text-slate-400 font-medium flex items-center gap-2">
                         <span>Personal Interno & Terceros / Contratistas</span>
@@ -57,26 +57,34 @@
             <div class="flex flex-wrap items-center gap-3">
                 <div class="bg-slate-800/80 backdrop-blur-md px-4 py-2 rounded-xl border border-slate-700/60 text-right">
                     <div id="liveClock" class="text-lg font-mono font-bold text-sky-400">00:00:00 AM</div>
-                    <div id="liveDate" class="text-[11px] text-slate-400 capitalize">Miércoles, 26 de Agosto</div>
+                    <div id="liveDate" class="text-[11px] text-slate-400 capitalize">Viernes, 28 de Agosto</div>
                 </div>
 
-                <button id="btnBatchAdd" onclick="openBatchModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-white px-3.5 py-2.5 rounded-xl border border-slate-700 text-sm font-semibold transition-all shadow-sm hover:border-amber-500/50" title="Ingreso Masivo de Garita">
+                <!-- Manual de Uso Button -->
+                <button onclick="openManualModal()" class="flex items-center gap-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:scale-105" title="Manual de Uso para Vigilante de Garita">
+                    <i data-lucide="book-open" class="w-4 h-4"></i>
+                    <span>📖 Manual Garita</span>
+                </button>
+
+                <!-- User Account Role Selector -->
+                <button onclick="openRoleModal()" id="userRoleBadge" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-2.5 rounded-xl border border-slate-700 text-xs font-semibold transition-all">
+                    <i data-lucide="user-check" class="w-4 h-4 text-emerald-400"></i>
+                    <span id="currentUserLabel">Rol: Vigilancia (Normal)</span>
+                </button>
+
+                <button id="btnBatchAdd" onclick="openBatchModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-white px-3.5 py-2.5 rounded-xl border border-slate-700 text-xs font-semibold transition-all shadow-sm hover:border-amber-500/50" title="Ingreso Masivo de Garita">
                     <i data-lucide="layers" class="w-4 h-4"></i>
-                    <span>Carga Masiva (Lote)</span>
+                    <span>Carga Masiva</span>
                 </button>
 
-                <button id="btnNewPerson" onclick="openNewPersonModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-white px-4 py-2.5 rounded-xl border border-slate-700 text-sm font-semibold transition-all shadow-sm hover:border-sky-500/50">
+                <button id="btnNewPerson" onclick="openNewPersonModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-white px-3.5 py-2.5 rounded-xl border border-slate-700 text-xs font-semibold transition-all shadow-sm hover:border-sky-500/50">
                     <i data-lucide="user-plus" class="w-4 h-4"></i>
-                    <span>+ Nuevo Personal / Tercero</span>
+                    <span>+ Nuevo Personal</span>
                 </button>
 
-                <button id="btnConfigSheets" onclick="openSheetsModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-3 py-2.5 rounded-xl border border-slate-700 text-sm transition-all" title="Configurar Google Sheets">
+                <button id="btnConfigSheets" onclick="openSheetsModal()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-3 py-2.5 rounded-xl border border-slate-700 text-xs transition-all" title="Configurar Google Sheets">
                     <i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-400"></i>
                     <span id="sheetsStatusBadge" class="w-2 h-2 rounded-full bg-amber-400"></span>
-                </button>
-
-                <button id="btnKioskToggle" onclick="toggleKioskMode()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-3 py-2.5 rounded-xl border border-slate-700 text-sm transition-all" title="Modo Kiosco / Pantalla Completa">
-                    <i data-lucide="maximize-2" class="w-4 h-4"></i>
                 </button>
             </div>
         </header>
@@ -155,14 +163,15 @@
                         <!-- Action Controls Form -->
                         <div class="space-y-4">
                             
-                            <!-- Hybrid Time Mode Selector -->
-                            <div class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-3">
+                            <!-- Hybrid Time Mode Selector (Restricted to Master and GPS accounts) -->
+                            <div id="hybridTimeModeContainer" class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-3">
                                 <div class="flex items-center justify-between">
                                     <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                                         <i data-lucide="clock" class="w-4 h-4 text-sky-400"></i>
                                         Hora de Marcación (Modo Híbrido)
                                     </span>
-                                    <div class="flex items-center gap-2">
+                                    
+                                    <div id="manualTimePermissionBlock" class="flex items-center gap-2">
                                         <label class="inline-flex items-center cursor-pointer">
                                             <input type="checkbox" id="useCustomTimeToggle" onchange="toggleCustomTimeMode()" class="sr-only peer">
                                             <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-white"></div>
@@ -189,14 +198,20 @@
                                        class="w-full bg-slate-900/80 border border-slate-700/80 focus:border-sky-500 text-white placeholder-slate-600 rounded-xl px-4 py-2.5 text-sm outline-none">
                             </div>
 
+                            <!-- Double Registration Warning Banner (Hidden by default) -->
+                            <div id="doubleRegistrationAlert" class="hidden bg-rose-950/80 border border-rose-500/50 text-rose-200 p-3.5 rounded-2xl text-xs font-semibold flex items-center gap-2">
+                                <i data-lucide="shield-alert" class="w-5 h-5 text-rose-400 shrink-0"></i>
+                                <span id="doubleRegAlertText">⚠️ Esta persona ya tiene un Ingreso registrado hoy y está actualmente EN TURNO.</span>
+                            </div>
+
                             <!-- Action Buttons Grid -->
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                                <button id="btnCheckIn" onclick="submitCheckIn()" class="w-full group relative flex items-center justify-center gap-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-900/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none disabled:hover:scale-100">
+                                <button id="btnCheckIn" onclick="submitCheckIn()" class="w-full group relative flex items-center justify-center gap-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-900/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none disabled:hover:scale-100">
                                     <i data-lucide="log-in" class="w-6 h-6 transition-transform group-hover:translate-x-1"></i>
                                     <span class="text-base">MARCAR INGRESO</span>
                                 </button>
 
-                                <button id="btnCheckOut" onclick="submitCheckOut()" class="w-full group relative flex items-center justify-center gap-3 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none disabled:hover:scale-100">
+                                <button id="btnCheckOut" onclick="submitCheckOut()" class="w-full group relative flex items-center justify-center gap-3 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none disabled:hover:scale-100">
                                     <i data-lucide="log-out" class="w-6 h-6 transition-transform group-hover:translate-x-1"></i>
                                     <span class="text-base">MARCAR SALIDA</span>
                                 </button>
@@ -292,7 +307,7 @@
                         <i data-lucide="history" class="w-5 h-5 text-sky-400"></i>
                         Registro de Asistencia del Día
                     </h3>
-                    <p class="text-xs text-slate-400">Detalle de ingresos, salidas y tiempos trabajados</p>
+                    <p class="text-xs text-slate-400">Detalle de ingresos, personas en turno y tiempos trabajados de hoy</p>
                 </div>
 
                 <!-- Filters & Export -->
@@ -337,9 +352,133 @@
 
     </div>
 
+    <!-- Modal: Manual de Uso de Garita paso a paso -->
+    <div id="manualModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-5 overflow-y-auto max-h-[90vh]">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                    <i data-lucide="book-open" class="w-6 h-6 text-sky-400"></i>
+                    📖 Manual de Garita - Guía Rápida para Vigilantes
+                </h3>
+                <button onclick="closeManualModal()" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4 text-xs text-slate-300">
+                <div class="bg-sky-950/40 border border-sky-500/30 p-4 rounded-2xl flex items-start gap-3">
+                    <i data-lucide="info" class="w-5 h-5 text-sky-400 shrink-0 mt-0.5"></i>
+                    <p class="text-sky-200 leading-relaxed">
+                        Este sistema permite registrar la entrada y salida de todo el personal interno y contratistas en tiempo real, sincronizándose automáticamente con Google Sheets.
+                    </p>
+                </div>
+
+                <!-- Paso 1 -->
+                <div class="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 space-y-1">
+                    <h4 class="font-bold text-sm text-sky-400 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-300 flex items-center justify-center text-xs">1</span>
+                        Buscar a la Persona
+                    </h4>
+                    <p class="text-slate-300 pl-8">Escribe el <strong>Nombre</strong>, <strong>DNI</strong> o <strong>Empresa</strong> en la barra superior. Haz clic sobre la persona en la lista desplegable.</p>
+                </div>
+
+                <!-- Paso 2 -->
+                <div class="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 space-y-1">
+                    <h4 class="font-bold text-sm text-emerald-400 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-xs">2</span>
+                        Marcar Ingreso o Salida (1 solo Clic)
+                    </h4>
+                    <p class="text-slate-300 pl-8">
+                        • Para ingresar: Haz clic en el botón verde <strong>MARCAR INGRESO</strong>.<br>
+                        • Para salir: Haz clic en el botón rojo <strong>MARCAR SALIDA</strong>.<br>
+                        <em>El sistema previene registros duplicados automáticamente.</em>
+                    </p>
+                </div>
+
+                <!-- Paso 3 -->
+                <div class="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 space-y-1">
+                    <h4 class="font-bold text-sm text-amber-400 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center text-xs">3</span>
+                        Ingreso Masivo (Hora Pico en Garita)
+                    </h4>
+                    <p class="text-slate-300 pl-8">
+                        Si llegan varias personas juntas, haz clic en el botón amarillo <strong>Carga Masiva</strong>. Pega la lista de DNIs y ajusta la hora de ingreso del grupo en 1 solo paso.
+                    </p>
+                </div>
+
+                <!-- Paso 4 -->
+                <div class="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 space-y-1">
+                    <h4 class="font-bold text-sm text-indigo-400 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-xs">4</span>
+                        Personal Nuevo o Tercero
+                    </h4>
+                    <p class="text-slate-300 pl-8">
+                        Si una persona no figura en la lista, haz clic en <strong>+ Nuevo Personal</strong>, escribe su DNI, Nombre Completo y Empresa contratista.
+                    </p>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-3 border-t border-slate-800">
+                <button onclick="closeManualModal()" class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-lg shadow-sky-600/30">
+                    Entendido / Cerrar Manual
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Selección de Rol / Cuenta de Usuario -->
+    <div id="roleModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i data-lucide="user-check" class="w-5 h-5 text-emerald-400"></i>
+                    Selección de Cuenta / Rol de Usuario
+                </h3>
+                <button onclick="closeRoleModal()" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <p class="text-slate-400">Selecciona la cuenta con la que operas para habilitar permisos especiales (Regularización manual de hora):</p>
+
+                <!-- Option 1: Garita Standard (akmseguridad@gmail.com) -->
+                <button onclick="setUserRole('guard')" class="w-full text-left p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 flex items-center justify-between transition-all">
+                    <div>
+                        <div class="font-bold text-white">akmseguridad@gmail.com</div>
+                        <div class="text-[11px] text-slate-400">Vigilante de Garita &bull; Marcación estándar en 1 clic (sin regularizar hora)</div>
+                    </div>
+                    <span class="px-2 py-1 rounded bg-slate-700 text-slate-300 font-bold text-[10px]">Garita</span>
+                </button>
+
+                <!-- Option 2: Priscila Arca (Encargada GPS) -->
+                <button onclick="setUserRole('priscila')" class="w-full text-left p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 flex items-center justify-between transition-all">
+                    <div>
+                        <div class="font-bold text-amber-300">priscilaarca.akm@gmail.com</div>
+                        <div class="text-[11px] text-slate-400">Encargada GPS &bull; Habilita Regularización Manual de Hora</div>
+                    </div>
+                    <span class="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-[10px]">GPS Admin</span>
+                </button>
+
+                <!-- Option 3: Roy Gonza Ramos (Master Admin) -->
+                <button onclick="setUserRole('roy')" class="w-full text-left p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 flex items-center justify-between transition-all">
+                    <div>
+                        <div class="font-bold text-sky-400">roy.gonza.ramos.akm@gmail.com</div>
+                        <div class="text-[11px] text-slate-400">Cuenta Master &bull; Acceso total y control de todo el sistema</div>
+                    </div>
+                    <span class="px-2 py-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 font-bold text-[10px]">Master</span>
+                </button>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-slate-800">
+                <button onclick="closeRoleModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-semibold">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal: Carga Masiva (Lote de Garita) -->
     <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5">
             <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2">
                     <i data-lucide="layers" class="w-5 h-5 text-amber-400"></i>
@@ -376,7 +515,7 @@
 
     <!-- Modal: Nuevo Personal / Tercero -->
     <div id="newPersonModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5">
             <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2">
                     <i data-lucide="user-plus" class="w-5 h-5 text-sky-400"></i>

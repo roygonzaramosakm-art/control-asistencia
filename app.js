@@ -6,7 +6,8 @@ let state = {
     selectedEmployee: null,
     todayData: { registros_hoy: [], en_turno: [], kpis: {} },
     sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || DEFAULT_SHEETS_URL,
-    customTimeMode: false
+    customTimeMode: false,
+    userRole: localStorage.getItem('control_asistencia_user_role') || 'guard' // Options: 'guard', 'priscila', 'roy'
 };
 
 // DOM Elements
@@ -42,6 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
     initClock();
     loadConfig();
+    updateUserRoleUI();
     refreshAllData();
 
     // Event listeners: INSTANT zero-delay search
@@ -68,6 +70,61 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auto-refresh data every 30 seconds in background
     setInterval(refreshAllData, 30000);
 });
+
+// Role & Permission Management
+function setUserRole(role) {
+    state.userRole = role;
+    localStorage.setItem('control_asistencia_user_role', role);
+    updateUserRoleUI();
+    closeRoleModal();
+
+    if (role === 'roy') {
+        showToast('Iniciado como Master Admin (roy.gonza.ramos.akm@gmail.com)', 'success');
+    } else if (role === 'priscila') {
+        showToast('Iniciado como Encargada GPS (priscilaarca.akm@gmail.com)', 'success');
+    } else {
+        showToast('Iniciado como Seguridad (akmseguridad@gmail.com)', 'info');
+    }
+}
+
+function updateUserRoleUI() {
+    const label = document.getElementById('currentUserLabel');
+    const permissionBlock = document.getElementById('manualTimePermissionBlock');
+
+    if (state.userRole === 'roy') {
+        if (label) label.textContent = 'roy.gonza.ramos.akm@gmail.com (Master)';
+        if (permissionBlock) permissionBlock.classList.remove('hidden');
+    } else if (state.userRole === 'priscila') {
+        if (label) label.textContent = 'priscilaarca.akm@gmail.com (GPS)';
+        if (permissionBlock) permissionBlock.classList.remove('hidden');
+    } else {
+        if (label) label.textContent = 'akmseguridad@gmail.com (Garita)';
+        if (permissionBlock) permissionBlock.classList.add('hidden');
+        
+        // Reset custom time mode if guard is active
+        const toggle = document.getElementById('useCustomTimeToggle');
+        if (toggle && toggle.checked) {
+            toggle.checked = false;
+            toggleCustomTimeMode();
+        }
+    }
+}
+
+function openRoleModal() {
+    document.getElementById('roleModal').classList.remove('hidden');
+}
+
+function closeRoleModal() {
+    document.getElementById('roleModal').classList.add('hidden');
+}
+
+function openManualModal() {
+    document.getElementById('manualModal').classList.remove('hidden');
+}
+
+function closeManualModal() {
+    document.getElementById('manualModal').classList.add('hidden');
+}
 
 // Live Clock
 function initClock() {
@@ -105,7 +162,7 @@ function showToast(message, type = 'info') {
 
     setTimeout(() => {
         toast.remove();
-    }, 4000);
+    }, 4500);
 }
 
 function toggleCustomTimeMode() {
@@ -131,7 +188,7 @@ function getSelectedTime() {
     const toggle = document.getElementById('useCustomTimeToggle');
     const customInput = document.getElementById('customTimeInput');
     
-    if (toggle && toggle.checked && customInput && customInput.value) {
+    if (state.userRole !== 'guard' && toggle && toggle.checked && customInput && customInput.value) {
         return customInput.value + ':00';
     }
     return new Date().toLocaleTimeString('es-ES');
@@ -399,22 +456,41 @@ function selectEmployee(emp) {
     const isEnTurno = emp.estado_hoy === 'EN_TURNO';
     const cleanTime = cleanTimeString(emp.hora_ingreso_hoy);
 
+    const doubleAlert = document.getElementById('doubleRegistrationAlert');
+    const doubleAlertText = document.getElementById('doubleRegAlertText');
+
     if (isEnTurno) {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-emerald-950/80 text-emerald-300 border border-emerald-500/40";
         empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN PLANTA (DESDE ${cleanTime})</span>`;
+        
+        // Anti-Doble Registro Protection: Disable Check-In button
         btnCheckIn.disabled = true;
         btnCheckOut.disabled = false;
+
+        if (doubleAlert && doubleAlertText) {
+            doubleAlertText.textContent = `⚠️ Esta persona ya tiene un Ingreso registrado hoy a las ${cleanTime} y está actualmente EN TURNO.`;
+            doubleAlert.classList.remove('hidden');
+        }
     } else {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-slate-900 text-slate-400 border border-slate-700";
         empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span> <span>FUERA / LISTO PARA INGRESO</span>`;
+        
         btnCheckIn.disabled = false;
         btnCheckOut.disabled = true;
+
+        if (doubleAlert) doubleAlert.classList.add('hidden');
     }
 }
 
-// Marking Actions with Hybrid Time Mode Support
+// Marking Actions with Anti-Double Registration Guard
 async function submitCheckIn() {
     if (!state.selectedEmployee) return;
+
+    // Prevención de doble registro
+    if (state.selectedEmployee.estado_hoy === 'EN_TURNO') {
+        showToast(`⚠️ Registro bloqueado: ${state.selectedEmployee.nombre} ya se encuentra EN PLANTA`, 'error');
+        return;
+    }
     
     btnCheckIn.disabled = true;
     const notes = recordNotes.value.trim();
@@ -479,6 +555,11 @@ async function submitCheckIn() {
 
 async function submitCheckOut() {
     if (!state.selectedEmployee) return;
+
+    if (state.selectedEmployee.estado_hoy === 'FUERA') {
+        showToast(`⚠️ Esta persona está FUERA de planta. Debe ingresar primero`, 'error');
+        return;
+    }
     
     btnCheckOut.disabled = true;
     const notes = recordNotes.value.trim();
@@ -579,6 +660,11 @@ async function submitBatchCheckIn() {
                 nombre: term,
                 empresa: 'INTERNO'
             };
+        }
+
+        // Prevención de doble registro en carga masiva
+        if (emp.estado_hoy === 'EN_TURNO') {
+            continue;
         }
 
         try {
@@ -686,6 +772,7 @@ async function quickMarkExit(dni) {
     }
 }
 
+// Renderiza todos los registros del día (tanto los de EN_TURNO como COMPLETADO)
 function renderTable(list) {
     const tbody = document.getElementById('attendanceTableBody');
     tbody.innerHTML = '';
