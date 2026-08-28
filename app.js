@@ -38,6 +38,13 @@ function cleanTimeString(str) {
     return str;
 }
 
+function getUserEmail() {
+    const role = state.userRole || localStorage.getItem('control_asistencia_user_role') || 'guard';
+    if (role === 'roy') return 'roy.gonza.ramos.akm@gmail.com';
+    if (role === 'priscila') return 'priscilaarca.akm@gmail.com';
+    return 'akmseguridad@gmail.com';
+}
+
 // Initialize on Load
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
@@ -482,7 +489,7 @@ function selectEmployee(emp) {
     }
 }
 
-// Marking Actions with Anti-Double Registration Guard
+// Marking Actions with Anti-Double Registration Guard & User Account Tracking
 async function submitCheckIn() {
     if (!state.selectedEmployee) return;
 
@@ -497,13 +504,14 @@ async function submitCheckIn() {
     const now = new Date();
     const fecha = now.toISOString().split('T')[0];
     const hora_ingreso = getSelectedTime();
+    const userEmail = getUserEmail();
 
     // 1. Try local API
     try {
         const res = await fetch('/api/asistencia/ingreso', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_ingreso: hora_ingreso })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_ingreso: hora_ingreso, registrado_por: userEmail })
         });
         if (res.ok) {
             playSuccessSound();
@@ -534,12 +542,13 @@ async function submitCheckIn() {
                 fecha: fecha,
                 hora_ingreso: hora_ingreso,
                 estado: 'EN_TURNO',
-                notas: notes
+                notas: notes,
+                registrado_por: userEmail
             })
         });
 
         playSuccessSound();
-        showToast(`Ingreso registrado (${hora_ingreso}): ${state.selectedEmployee.nombre}`, 'success');
+        showToast(`Ingreso registrado (${hora_ingreso}) por ${userEmail}`, 'success');
         recordNotes.value = '';
         state.selectedEmployee.estado_hoy = 'EN_TURNO';
         state.selectedEmployee.hora_ingreso_hoy = hora_ingreso;
@@ -566,13 +575,14 @@ async function submitCheckOut() {
     const now = new Date();
     const fecha = now.toISOString().split('T')[0];
     const hora_salida = getSelectedTime();
+    const userEmail = getUserEmail();
 
     // 1. Try local API
     try {
         const res = await fetch('/api/asistencia/salida', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_salida: hora_salida })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_salida: hora_salida, registrado_por: userEmail })
         });
         if (res.ok) {
             const data = await res.json();
@@ -604,12 +614,13 @@ async function submitCheckOut() {
                 fecha: fecha,
                 hora_salida: hora_salida,
                 estado: 'COMPLETADO',
-                notas: notes
+                notas: notes,
+                registrado_por: userEmail
             })
         });
 
         playSuccessSound();
-        showToast(`Salida registrada (${hora_salida}): ${state.selectedEmployee.nombre}`, 'success');
+        showToast(`Salida registrada (${hora_salida}) por ${userEmail}`, 'success');
         recordNotes.value = '';
         state.selectedEmployee.estado_hoy = 'FUERA';
         selectEmployee(state.selectedEmployee);
@@ -645,6 +656,7 @@ async function submitBatchCheckIn() {
     const horaIngreso = rawTime ? rawTime + ':00' : new Date().toLocaleTimeString('es-ES');
     const fecha = new Date().toISOString().split('T')[0];
     const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const userEmail = getUserEmail();
 
     let registeredCount = 0;
 
@@ -680,14 +692,15 @@ async function submitBatchCheckIn() {
                     fecha: fecha,
                     hora_ingreso: horaIngreso,
                     estado: 'EN_TURNO',
-                    notas: 'Ingreso Masivo Garita'
+                    notas: 'Ingreso Masivo Garita',
+                    registrado_por: userEmail
                 })
             });
             registeredCount++;
         } catch (e) {}
     }
 
-    showToast(`Carga masiva completada: ${registeredCount} ingresos a las ${horaIngreso}`, 'success');
+    showToast(`Carga masiva completada: ${registeredCount} ingresos por ${userEmail}`, 'success');
     closeBatchModal();
     document.getElementById('batchListInput').value = '';
     await refreshAllData();
@@ -780,7 +793,7 @@ function renderTable(list) {
     if (!list || list.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+                <td colspan="9" class="px-4 py-8 text-center text-slate-500">
                     No se registran marcaciones en el día de hoy.
                 </td>
             </tr>
@@ -811,6 +824,7 @@ function renderTable(list) {
             <td class="px-4 py-3 font-mono text-slate-300">${row.horas_trabajadas || '--'}</td>
             <td class="px-4 py-3">${statusBadge}</td>
             <td class="px-4 py-3 text-slate-400 truncate max-w-xs">${row.notas || '--'}</td>
+            <td class="px-4 py-3 font-mono text-[11px] text-sky-400 font-semibold">${row.registrado_por || 'akmseguridad@gmail.com'}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -966,9 +980,9 @@ function exportToCSV() {
         return;
     }
 
-    let csvContent = "data:text/csv;charset=utf-8,DNI,Nombre,Empresa,Fecha,Hora Ingreso,Hora Salida,Horas Trabajadas,Estado,Notas\n";
+    let csvContent = "data:text/csv;charset=utf-8,DNI,Nombre,Empresa,Fecha,Hora Ingreso,Hora Salida,Horas Trabajadas,Estado,Notas,Registrado Por\n";
     records.forEach(r => {
-        csvContent += `"${r.dni}","${r.nombre}","${r.empresa || 'INTERNO'}","${r.fecha}","${r.hora_ingreso || ''}","${r.hora_salida || ''}","${r.horas_trabajadas || ''}","${r.estado}","${r.notas || ''}"\n`;
+        csvContent += `"${r.dni}","${r.nombre}","${r.empresa || 'INTERNO'}","${r.fecha}","${r.hora_ingreso || ''}","${r.hora_salida || ''}","${r.horas_trabajadas || ''}","${r.estado}","${r.notas || ''}","${r.registrado_por || 'akmseguridad@gmail.com'}"\n`;
     });
 
     const encodedUri = encodeURI(csvContent);
