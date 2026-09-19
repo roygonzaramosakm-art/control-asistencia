@@ -562,20 +562,107 @@ async function submitCheckIn() {
     }
 }
 
-async function submitCheckOut() {
+let pendingExitTimeOverride = null;
+
+function closeConfirmExitModal() {
+    const modal = document.getElementById('confirmExitModal');
+    if (modal) modal.classList.add('hidden');
+    pendingExitTimeOverride = null;
+}
+
+function executeConfirmedCheckOut() {
+    const customInput = document.getElementById('modalCustomTimeInput');
+    if (customInput && customInput.value && state.userRole !== 'guard') {
+        pendingExitTimeOverride = customInput.value + ':00';
+    }
+    closeConfirmExitModal();
+    submitCheckOut(true);
+}
+
+async function submitCheckOut(forceConfirm = false) {
     if (!state.selectedEmployee) return;
 
     if (state.selectedEmployee.estado_hoy === 'FUERA') {
         showToast(`⚠️ Esta persona está FUERA de planta. Debe ingresar primero`, 'error');
         return;
     }
+
+    const emp = state.selectedEmployee;
+    const now = new Date();
+    const fecha = now.toISOString().split('T')[0];
+
+    // Calcular tiempo transcurrido desde el Ingreso
+    let elapsedSeconds = 0;
+    if (emp.hora_ingreso_hoy) {
+        const cleanIngreso = cleanTimeString(emp.hora_ingreso_hoy);
+        const match = cleanIngreso.match(/(\d{1,2}):(\d{2}):?(\d{2})?/);
+        if (match) {
+            const h = parseInt(match[1], 10);
+            const m = parseInt(match[2], 10);
+            const s = parseInt(match[3] || 0, 10);
+            const ingresoSec = h * 3600 + m * 60 + s;
+            const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+            elapsedSeconds = nowSec - ingresoSec;
+            if (elapsedSeconds < 0) elapsedSeconds += 24 * 3600;
+        }
+    }
+
+    // Verificar si ya completó un turno previo hoy
+    const previousTodayShift = (state.todayData.registros_hoy || []).some(r => 
+        String(r.dni).trim() === String(emp.dni).trim() && r.estado === 'COMPLETADO'
+    );
+
+    const isShortShift = elapsedSeconds > 0 && elapsedSeconds < 1800; // Menos de 30 minutos
+
+    // Si es un turno corto o reingreso en el mismo día, solicitar confirmación explícita
+    if (!forceConfirm && (isShortShift || previousTodayShift)) {
+        const modal = document.getElementById('confirmExitModal');
+        const empNameElem = document.getElementById('confirmExitEmpName');
+        const ingresoTimeElem = document.getElementById('confirmExitIngresoTime');
+        const elapsedTimeElem = document.getElementById('confirmExitElapsedTime');
+        const warningBanner = document.getElementById('confirmExitWarningBanner');
+        const warningText = document.getElementById('confirmExitWarningText');
+        const masterContainer = document.getElementById('modalMasterOverrideContainer');
+        const customInput = document.getElementById('modalCustomTimeInput');
+
+        if (empNameElem) empNameElem.textContent = emp.nombre;
+        if (ingresoTimeElem) ingresoTimeElem.textContent = cleanTimeString(emp.hora_ingreso_hoy) || '--';
+
+        const h = Math.floor(elapsedSeconds / 3600);
+        const m = Math.floor((elapsedSeconds % 3600) / 60);
+        const s = Math.floor(elapsedSeconds % 60);
+        if (elapsedTimeElem) elapsedTimeElem.textContent = `${h}h ${m}m ${s}s`;
+
+        let warningMsg = '';
+        if (isShortShift && previousTodayShift) {
+            warningMsg = `<p class="font-bold text-amber-300">⚠️ Turno muy corto y Reingreso en el mismo día</p>
+                          <p class="text-[11px] text-amber-200/90">Esta persona sólo lleva ${m} min y ${s} seg en turno, y ya registró una asistencia previa hoy. Verifica con garita antes de confirmar.</p>`;
+        } else if (isShortShift) {
+            warningMsg = `<p class="font-bold text-amber-300">⚠️ Turno muy corto (menos de 30 minutos)</p>
+                          <p class="text-[11px] text-amber-200/90">Esta persona sólo lleva ${m} min y ${s} seg en turno. Si fue un error de garita, puedes cancelar la marcación o ajustar la hora real.</p>`;
+        } else if (previousTodayShift) {
+            warningMsg = `<p class="font-bold text-amber-300">ℹ️ Segundo turno del día</p>
+                          <p class="text-[11px] text-amber-200/90">Esta persona ya registra un turno completado el día de hoy.</p>`;
+        }
+
+        if (warningText) warningText.innerHTML = warningMsg;
+
+        if (state.userRole !== 'guard') {
+            if (masterContainer) masterContainer.classList.remove('hidden');
+            if (customInput) customInput.value = now.toTimeString().slice(0, 5);
+        } else {
+            if (masterContainer) masterContainer.classList.add('hidden');
+        }
+
+        if (modal) modal.classList.remove('hidden');
+        return;
+    }
     
     btnCheckOut.disabled = true;
     const notes = recordNotes.value.trim();
-    const now = new Date();
-    const fecha = now.toISOString().split('T')[0];
-    const hora_salida = getSelectedTime();
+    const hora_salida = pendingExitTimeOverride || getSelectedTime();
     const userEmail = getUserEmail();
+    pendingExitTimeOverride = null;
 
     // 1. Try local API
     try {

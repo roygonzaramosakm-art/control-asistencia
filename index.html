@@ -605,6 +605,55 @@
         </div>
     </div>
 
+    <!-- Modal: Confirmación de Salida / Alerta de Turno Corto o Doble Marcación -->
+    <div id="confirmExitModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400"></i>
+                    Confirmar Marcación de Salida
+                </h3>
+                <button onclick="closeConfirmExitModal()" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs text-slate-300">
+                <div class="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700 space-y-1">
+                    <p class="font-bold text-sm text-white" id="confirmExitEmpName">Contreras Montes Luz</p>
+                    <p class="text-slate-400">Hora de Ingreso registrada: <strong id="confirmExitIngresoTime" class="text-emerald-400 font-mono">21:20:07</strong></p>
+                    <p class="text-slate-400">Tiempo transcurrido en turno: <strong id="confirmExitElapsedTime" class="text-amber-300 font-mono">0h 4m 34s</strong></p>
+                </div>
+
+                <div id="confirmExitWarningBanner" class="bg-amber-950/80 border border-amber-500/50 p-3.5 rounded-2xl text-amber-200 text-xs font-semibold flex items-start gap-2.5">
+                    <i data-lucide="shield-alert" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5"></i>
+                    <div id="confirmExitWarningText" class="space-y-1">
+                        <p class="font-bold text-amber-300">⚠️ Turno muy corto (menos de 30 minutos)</p>
+                        <p class="text-[11px] text-amber-200/90">Esta persona sólo lleva unos minutos en turno. Si fue un error de garita, puedes cancelar la marcación o regularizar la hora exacta.</p>
+                    </div>
+                </div>
+
+                <!-- Master/GPS Time Override Option inside Modal -->
+                <div id="modalMasterOverrideContainer" class="hidden bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2">
+                    <label class="font-semibold text-sky-300 flex items-center gap-1 text-[11px]">
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                        Ajuste de Hora Real de Salida (Master / GPS Admin):
+                    </label>
+                    <input type="time" id="modalCustomTimeInput" class="w-full bg-slate-800 border border-sky-500/40 text-sky-200 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-sky-400">
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <button onclick="closeConfirmExitModal()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold text-xs border border-slate-700">
+                    ❌ Cancelar Marcación
+                </button>
+                <button id="btnProceedConfirmExit" onclick="executeConfirmedCheckOut()" class="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30">
+                    ✅ Confirmar Salida
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Application Script with Cache Buster -->
     <script src="app.js?v=2.0"></script>
 </body>
