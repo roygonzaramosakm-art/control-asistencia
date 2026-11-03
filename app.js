@@ -177,6 +177,7 @@ function toggleCustomTimeMode() {
     const currentDisplay = document.getElementById('currentTimeDisplay');
     const customContainer = document.getElementById('customTimeInputContainer');
     const customInput = document.getElementById('customTimeInput');
+    const customDateInput = document.getElementById('customDateInput');
 
     state.customTimeMode = toggle.checked;
     if (toggle.checked) {
@@ -185,10 +186,18 @@ function toggleCustomTimeMode() {
         if (customInput && !customInput.value) {
             customInput.value = new Date().toTimeString().slice(0, 5);
         }
+        if (customDateInput && !customDateInput.value) {
+            customDateInput.value = new Date().toISOString().split('T')[0];
+        }
     } else {
         currentDisplay.classList.remove('hidden');
         customContainer.classList.add('hidden');
     }
+
+    if (state.selectedEmployee) {
+        selectEmployee(state.selectedEmployee);
+    }
+    lucide.createIcons();
 }
 
 function getSelectedTime() {
@@ -196,9 +205,34 @@ function getSelectedTime() {
     const customInput = document.getElementById('customTimeInput');
     
     if (state.userRole !== 'guard' && toggle && toggle.checked && customInput && customInput.value) {
-        return customInput.value + ':00';
+        return customInput.value.length === 5 ? customInput.value + ':00' : customInput.value;
     }
     return new Date().toLocaleTimeString('es-ES');
+}
+
+function getSelectedDate() {
+    const toggle = document.getElementById('useCustomTimeToggle');
+    const customDateInput = document.getElementById('customDateInput');
+    if (state.userRole !== 'guard' && toggle && toggle.checked && customDateInput && customDateInput.value) {
+        return customDateInput.value;
+    }
+    return new Date().toISOString().split('T')[0];
+}
+
+function calculateDurationHHMMSS(horaIngreso, horaSalida) {
+    if (!horaIngreso || !horaSalida) return '';
+    const parseSec = (str) => {
+        const m = String(str).trim().match(/(\d{1,2}):(\d{2}):?(\d{2})?/);
+        if (!m) return 0;
+        return parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3] || 0, 10);
+    };
+    let diff = parseSec(horaSalida) - parseSec(horaIngreso);
+    if (diff < 0) diff += 24 * 3600;
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = Math.floor(diff % 60);
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
 async function refreshAllData() {
@@ -470,39 +504,47 @@ function selectEmployee(emp) {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-emerald-950/80 text-emerald-300 border border-emerald-500/40";
         empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN PLANTA (DESDE ${cleanTime})</span>`;
         
-        // Anti-Doble Registro Protection: Disable Check-In button
-        btnCheckIn.disabled = true;
+        // Si está en Modo Regularización Manual, habilitar ambos botones para permitir regularizar fechas anteriores
+        btnCheckIn.disabled = !state.customTimeMode;
         btnCheckOut.disabled = false;
 
         if (doubleAlert && doubleAlertText) {
             doubleAlertText.textContent = `⚠️ Esta persona ya tiene un Ingreso registrado hoy a las ${cleanTime} y está actualmente EN TURNO.`;
-            doubleAlert.classList.remove('hidden');
+            doubleAlert.classList.toggle('hidden', state.customTimeMode);
         }
     } else {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-slate-900 text-slate-400 border border-slate-700";
         empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span> <span>FUERA / LISTO PARA INGRESO</span>`;
         
         btnCheckIn.disabled = false;
-        btnCheckOut.disabled = true;
+        btnCheckOut.disabled = !state.customTimeMode;
 
         if (doubleAlert) doubleAlert.classList.add('hidden');
     }
 }
 
-// Marking Actions with Anti-Double Registration Guard & User Account Tracking
+// Marking Actions with Anti-Double Registration Guard, Custom Date/Time & User Account Tracking
 async function submitCheckIn() {
     if (!state.selectedEmployee) return;
 
-    // Prevención de doble registro
-    if (state.selectedEmployee.estado_hoy === 'EN_TURNO') {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const fecha = getSelectedDate();
+    const exitInput = document.getElementById('customExitTimeInput');
+
+    // Si en modo manual también llenó la Hora de Salida, registrar el turno completo directamente
+    if (state.customTimeMode && state.userRole !== 'guard' && exitInput && exitInput.value) {
+        await submitCompleteManualShift();
+        return;
+    }
+
+    // Prevención de doble registro solo si es el día de hoy en tiempo real
+    if (state.selectedEmployee.estado_hoy === 'EN_TURNO' && fecha === todayStr && !state.customTimeMode) {
         showToast(`⚠️ Registro bloqueado: ${state.selectedEmployee.nombre} ya se encuentra EN PLANTA`, 'error');
         return;
     }
     
     btnCheckIn.disabled = true;
     const notes = recordNotes.value.trim();
-    const now = new Date();
-    const fecha = now.toISOString().split('T')[0];
     const hora_ingreso = getSelectedTime();
     const userEmail = getUserEmail();
 
@@ -511,11 +553,11 @@ async function submitCheckIn() {
         const res = await fetch('/api/asistencia/ingreso', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_ingreso: hora_ingreso, registrado_por: userEmail })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, fecha: fecha, notas: notes, hora_ingreso: hora_ingreso, registrado_por: userEmail })
         });
         if (res.ok) {
             playSuccessSound();
-            showToast(`Ingreso registrado (${hora_ingreso}): ${state.selectedEmployee.nombre}`, 'success');
+            showToast(`Ingreso registrado (${fecha} ${hora_ingreso}): ${state.selectedEmployee.nombre}`, 'success');
             recordNotes.value = '';
             await refreshAllData();
             return;
@@ -548,15 +590,81 @@ async function submitCheckIn() {
         });
 
         playSuccessSound();
-        showToast(`Ingreso registrado (${hora_ingreso}) por ${userEmail}`, 'success');
+        showToast(`Ingreso registrado (${fecha} - ${hora_ingreso}) por ${userEmail}`, 'success');
         recordNotes.value = '';
-        state.selectedEmployee.estado_hoy = 'EN_TURNO';
-        state.selectedEmployee.hora_ingreso_hoy = hora_ingreso;
+        if (fecha === todayStr) {
+            state.selectedEmployee.estado_hoy = 'EN_TURNO';
+            state.selectedEmployee.hora_ingreso_hoy = hora_ingreso;
+        }
         selectEmployee(state.selectedEmployee);
         await refreshAllData();
 
     } catch (err) {
         showToast("Error al enviar registro a Google Sheets", 'error');
+    } finally {
+        btnCheckIn.disabled = false;
+    }
+}
+
+// Registrar un turno completo (Fecha + Hora Ingreso + Hora Salida) de un solo paso
+async function submitCompleteManualShift() {
+    if (!state.selectedEmployee) {
+        showToast('Selecciona primero a un personal en el buscador', 'error');
+        return;
+    }
+
+    const customDateInput = document.getElementById('customDateInput');
+    const customTimeInput = document.getElementById('customTimeInput');
+    const customExitTimeInput = document.getElementById('customExitTimeInput');
+
+    const fecha = (customDateInput && customDateInput.value) ? customDateInput.value : new Date().toISOString().split('T')[0];
+    const rawIngreso = customTimeInput ? customTimeInput.value : '';
+    const rawSalida = customExitTimeInput ? customExitTimeInput.value : '';
+
+    if (!rawIngreso || !rawSalida) {
+        showToast('Ingresa tanto la Hora de Ingreso como la Hora de Salida para registrar el turno completo', 'error');
+        return;
+    }
+
+    const hora_ingreso = rawIngreso.length === 5 ? rawIngreso + ':00' : rawIngreso;
+    const hora_salida = rawSalida.length === 5 ? rawSalida + ':00' : rawSalida;
+    const horas_trabajadas = calculateDurationHHMMSS(hora_ingreso, hora_salida);
+    const notes = (recordNotes.value.trim() || 'Regularización manual de turno completo');
+    const userEmail = getUserEmail();
+
+    if (!state.sheetsUrl) {
+        showToast('Configura la URL de Google Sheets para registrar', 'error');
+        return;
+    }
+
+    btnCheckIn.disabled = true;
+    try {
+        await fetch(state.sheetsUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'record_attendance',
+                dni: state.selectedEmployee.dni,
+                nombre: state.selectedEmployee.nombre,
+                empresa: state.selectedEmployee.empresa,
+                fecha: fecha,
+                hora_ingreso: hora_ingreso,
+                hora_salida: hora_salida,
+                horas_trabajadas: horas_trabajadas,
+                estado: 'COMPLETADO',
+                notas: notes,
+                registrado_por: userEmail
+            })
+        });
+
+        playSuccessSound();
+        showToast(`Turno completo registrado (${fecha}: ${hora_ingreso} a ${hora_salida} = ${horas_trabajadas})`, 'success');
+        recordNotes.value = '';
+        if (customExitTimeInput) customExitTimeInput.value = '';
+        await refreshAllData();
+    } catch (err) {
+        showToast('Error al registrar turno completo en Google Sheets', 'error');
     } finally {
         btnCheckIn.disabled = false;
     }
@@ -582,14 +690,16 @@ function executeConfirmedCheckOut() {
 async function submitCheckOut(forceConfirm = false) {
     if (!state.selectedEmployee) return;
 
-    if (state.selectedEmployee.estado_hoy === 'FUERA') {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const fecha = getSelectedDate();
+
+    if (state.selectedEmployee.estado_hoy === 'FUERA' && !state.customTimeMode && fecha === todayStr) {
         showToast(`⚠️ Esta persona está FUERA de planta. Debe ingresar primero`, 'error');
         return;
     }
 
     const emp = state.selectedEmployee;
     const now = new Date();
-    const fecha = now.toISOString().split('T')[0];
 
     // Calcular tiempo transcurrido desde el Ingreso
     let elapsedSeconds = 0;
@@ -612,10 +722,10 @@ async function submitCheckOut(forceConfirm = false) {
         String(r.dni).trim() === String(emp.dni).trim() && r.estado === 'COMPLETADO'
     );
 
-    const isShortShift = elapsedSeconds > 0 && elapsedSeconds < 1800; // Menos de 30 minutos
+    const isShortShift = elapsedSeconds > 0 && elapsedSeconds < 1800 && !state.customTimeMode; // Menos de 30 minutos
 
     // Si es un turno corto o reingreso en el mismo día, solicitar confirmación explícita
-    if (!forceConfirm && (isShortShift || previousTodayShift)) {
+    if (!forceConfirm && !state.customTimeMode && (isShortShift || previousTodayShift)) {
         const modal = document.getElementById('confirmExitModal');
         const empNameElem = document.getElementById('confirmExitEmpName');
         const ingresoTimeElem = document.getElementById('confirmExitIngresoTime');
@@ -669,12 +779,12 @@ async function submitCheckOut(forceConfirm = false) {
         const res = await fetch('/api/asistencia/salida', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: state.selectedEmployee.dni, notas: notes, hora_salida: hora_salida, registrado_por: userEmail })
+            body: JSON.stringify({ dni: state.selectedEmployee.dni, fecha: fecha, notas: notes, hora_salida: hora_salida, registrado_por: userEmail })
         });
         if (res.ok) {
             const data = await res.json();
             playSuccessSound();
-            showToast(`Salida registrada (${hora_salida}): ${state.selectedEmployee.nombre}`, 'success');
+            showToast(`Salida registrada (${fecha} ${hora_salida}): ${state.selectedEmployee.nombre}`, 'success');
             recordNotes.value = '';
             await refreshAllData();
             return;
@@ -707,9 +817,11 @@ async function submitCheckOut(forceConfirm = false) {
         });
 
         playSuccessSound();
-        showToast(`Salida registrada (${hora_salida}) por ${userEmail}`, 'success');
+        showToast(`Salida registrada (${fecha} - ${hora_salida}) por ${userEmail}`, 'success');
         recordNotes.value = '';
-        state.selectedEmployee.estado_hoy = 'FUERA';
+        if (fecha === todayStr) {
+            state.selectedEmployee.estado_hoy = 'FUERA';
+        }
         selectEmployee(state.selectedEmployee);
         await refreshAllData();
 
@@ -720,51 +832,199 @@ async function submitCheckOut(forceConfirm = false) {
     }
 }
 
-// Carga Masiva por Lote (Garita)
+// Carga Masiva y Regularización por Días (Garita / Formatos Físicos)
+let selectedBatchDnis = new Set();
+
 function openBatchModal() {
     document.getElementById('batchModal').classList.remove('hidden');
-    const input = document.getElementById('batchTimeInput');
-    if (input) input.value = new Date().toTimeString().slice(0, 5);
+    const dateInput = document.getElementById('batchDateInput');
+    const timeInput = document.getElementById('batchTimeInput');
+    if (dateInput && !dateInput.value) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+    if (timeInput && !timeInput.value) {
+        timeInput.value = new Date().toTimeString().slice(0, 5);
+    }
+    renderBatchStaffList();
+    lucide.createIcons();
 }
 
 function closeBatchModal() {
     document.getElementById('batchModal').classList.add('hidden');
 }
 
-async function submitBatchCheckIn() {
-    const rawTime = document.getElementById('batchTimeInput').value;
-    const rawList = document.getElementById('batchListInput').value.trim();
+function updateBatchSelectedCount() {
+    const badge = document.getElementById('batchSelectedCountBadge');
+    if (badge) {
+        badge.textContent = `${selectedBatchDnis.size} seleccionados`;
+    }
+}
 
-    if (!rawList) {
-        showToast('Ingresa al menos un DNI o Nombre', 'error');
+function toggleBatchStaffItem(dni) {
+    const key = String(dni).trim();
+    if (selectedBatchDnis.has(key)) {
+        selectedBatchDnis.delete(key);
+    } else {
+        selectedBatchDnis.add(key);
+    }
+    updateBatchSelectedCount();
+    renderBatchStaffList();
+}
+
+function toggleAllBatchStaff(selectAll) {
+    const filterInput = document.getElementById('batchStaffFilter');
+    const query = filterInput ? filterInput.value.trim() : '';
+    const filtered = filterEmployeesInMemory(query);
+
+    if (selectAll) {
+        filtered.forEach(e => selectedBatchDnis.add(String(e.dni).trim()));
+    } else {
+        selectedBatchDnis.clear();
+    }
+    updateBatchSelectedCount();
+    renderBatchStaffList();
+}
+
+function renderBatchStaffList() {
+    const container = document.getElementById('batchStaffCheckboxes');
+    if (!container) return;
+
+    const filterInput = document.getElementById('batchStaffFilter');
+    const query = filterInput ? filterInput.value.trim() : '';
+    const list = filterEmployeesInMemory(query);
+
+    container.innerHTML = '';
+    if (list.length === 0) {
+        container.innerHTML = `<p class="text-slate-500 text-xs col-span-2 py-2 text-center">No se encontró personal con ese filtro.</p>`;
         return;
     }
 
-    const horaIngreso = rawTime ? rawTime + ':00' : new Date().toLocaleTimeString('es-ES');
-    const fecha = new Date().toISOString().split('T')[0];
-    const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    list.forEach(emp => {
+        const dniKey = String(emp.dni).trim();
+        const isChecked = selectedBatchDnis.has(dniKey);
+        const div = document.createElement('div');
+        div.onclick = () => toggleBatchStaffItem(dniKey);
+        div.className = `p-2 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+            isChecked 
+                ? 'bg-sky-950/80 border-sky-500/60 text-white' 
+                : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
+        }`;
+
+        const empresaTag = emp.empresa && emp.empresa !== 'INTERNO'
+            ? `<span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold">${emp.empresa}</span>`
+            : `<span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[9px]">Interno</span>`;
+
+        div.innerHTML = `
+            <div class="flex items-center gap-2 min-w-0 pr-2">
+                <div class="w-4 h-4 rounded flex items-center justify-center border ${isChecked ? 'bg-sky-500 border-sky-400 text-white' : 'border-slate-600 bg-slate-800'} text-[10px] font-bold shrink-0">
+                    ${isChecked ? '✓' : ''}
+                </div>
+                <div class="truncate">
+                    <div class="text-xs font-semibold truncate">${emp.nombre}</div>
+                    <div class="text-[10px] text-slate-400 font-mono">${emp.dni}</div>
+                </div>
+            </div>
+            ${empresaTag}
+        `;
+        container.appendChild(div);
+    });
+    updateBatchSelectedCount();
+}
+
+async function submitBatchCheckIn(keepOpen = false) {
+    const dateInput = document.getElementById('batchDateInput');
+    const rawTime = document.getElementById('batchTimeInput').value;
+    const rawExitTime = document.getElementById('batchExitTimeInput') ? document.getElementById('batchExitTimeInput').value : '';
+    const rawList = document.getElementById('batchListInput').value.trim();
+    const notesInput = document.getElementById('batchNotesInput');
+    const customNotes = (notesInput && notesInput.value.trim()) ? notesInput.value.trim() : 'Carga Masiva / Regularización por Día';
+
+    const defaultFecha = (dateInput && dateInput.value) ? dateInput.value : new Date().toISOString().split('T')[0];
+    const defaultHoraIngreso = rawTime ? (rawTime.length === 5 ? rawTime + ':00' : rawTime) : new Date().toLocaleTimeString('es-ES');
+    const defaultHoraSalida = rawExitTime ? (rawExitTime.length === 5 ? rawExitTime + ':00' : rawExitTime) : '';
+    const todayStr = new Date().toISOString().split('T')[0];
     const userEmail = getUserEmail();
+
+    const entriesToProcess = [];
+
+    // 1. Personal seleccionado mediante Checkboxes
+    selectedBatchDnis.forEach(dniKey => {
+        const emp = state.allEmployees.find(e => String(e.dni).trim() === dniKey);
+        if (emp) {
+            entriesToProcess.push({
+                emp: emp,
+                fecha: defaultFecha,
+                horaIngreso: defaultHoraIngreso,
+                horaSalida: defaultHoraSalida
+            });
+        }
+    });
+
+    // 2. Líneas pegadas en el cuadro de texto (soporta DNI/Nombre simple o formato con fecha/horas separadas por coma)
+    if (rawList) {
+        const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        for (const line of lines) {
+            const parts = line.split(/[,\t;|]+/).map(p => p.trim()).filter(Boolean);
+            let lineFecha = defaultFecha;
+            let term = line;
+            let lineIngreso = defaultHoraIngreso;
+            let lineSalida = defaultHoraSalida;
+
+            if (parts.length >= 2) {
+                // Formato: YYYY-MM-DD, DNI/Nombre, HH:MM, HH:MM
+                if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+                    lineFecha = parts[0];
+                    term = parts[1];
+                    if (parts[2]) lineIngreso = parts[2].length === 5 ? parts[2] + ':00' : parts[2];
+                    if (parts[3]) lineSalida = parts[3].length === 5 ? parts[3] + ':00' : parts[3];
+                } else {
+                    // Formato: DNI/Nombre, HH:MM, HH:MM
+                    term = parts[0];
+                    if (parts[1]) lineIngreso = parts[1].length === 5 ? parts[1] + ':00' : parts[1];
+                    if (parts[2]) lineSalida = parts[2].length === 5 ? parts[2] + ':00' : parts[2];
+                }
+            }
+
+            let emp = state.allEmployees.find(e => 
+                (e.dni && e.dni.replace(/\s+/g, '') === term.replace(/\s+/g, '')) || 
+                (e.nombre && e.nombre.toLowerCase().includes(term.toLowerCase()))
+            );
+
+            if (!emp) {
+                emp = {
+                    dni: /^\d+$/.test(term) ? term : 'DNI-' + Math.floor(100000 + Math.random() * 900000),
+                    nombre: term,
+                    empresa: 'INTERNO'
+                };
+            }
+
+            entriesToProcess.push({
+                emp: emp,
+                fecha: lineFecha,
+                horaIngreso: lineIngreso,
+                horaSalida: lineSalida
+            });
+        }
+    }
+
+    if (entriesToProcess.length === 0) {
+        showToast('Selecciona al menos un personal de la lista o escribe un DNI/Nombre', 'error');
+        return;
+    }
 
     let registeredCount = 0;
 
-    for (const term of lines) {
-        let emp = state.allEmployees.find(e => 
-            (e.dni && e.dni.replace(/\s+/g, '') === term.replace(/\s+/g, '')) || 
-            (e.nombre && e.nombre.toLowerCase().includes(term.toLowerCase()))
-        );
+    for (const item of entriesToProcess) {
+        const { emp, fecha, horaIngreso, horaSalida } = item;
 
-        if (!emp) {
-            emp = {
-                dni: /^\d+$/.test(term) ? term : 'DNI-' + Math.floor(100000 + Math.random() * 900000),
-                nombre: term,
-                empresa: 'INTERNO'
-            };
-        }
-
-        // Prevención de doble registro en carga masiva
-        if (emp.estado_hoy === 'EN_TURNO') {
+        // Prevención de doble registro solo si es hoy y en turno sin hora de salida
+        if (emp.estado_hoy === 'EN_TURNO' && fecha === todayStr && !horaSalida) {
             continue;
         }
+
+        const isCompleto = Boolean(horaSalida);
+        const horasTrabajadas = isCompleto ? calculateDurationHHMMSS(horaIngreso, horaSalida) : '';
+        const estadoFinal = isCompleto ? 'COMPLETADO' : 'EN_TURNO';
 
         try {
             await fetch(state.sheetsUrl, {
@@ -778,8 +1038,10 @@ async function submitBatchCheckIn() {
                     empresa: emp.empresa,
                     fecha: fecha,
                     hora_ingreso: horaIngreso,
-                    estado: 'EN_TURNO',
-                    notas: 'Ingreso Masivo Garita',
+                    hora_salida: horaSalida || '',
+                    horas_trabajadas: horasTrabajadas,
+                    estado: estadoFinal,
+                    notas: customNotes,
                     registrado_por: userEmail
                 })
             });
@@ -787,9 +1049,17 @@ async function submitBatchCheckIn() {
         } catch (e) {}
     }
 
-    showToast(`Carga masiva completada: ${registeredCount} ingresos por ${userEmail}`, 'success');
-    closeBatchModal();
+    playSuccessSound();
+    showToast(`✅ Día ${defaultFecha}: ${registeredCount} registros guardados (${defaultHoraSalida ? 'Turno Completo' : 'Ingreso'})`, 'success');
+    
+    selectedBatchDnis.clear();
+    updateBatchSelectedCount();
+    renderBatchStaffList();
     document.getElementById('batchListInput').value = '';
+
+    if (!keepOpen) {
+        closeBatchModal();
+    }
     await refreshAllData();
 }
 

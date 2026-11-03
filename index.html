@@ -167,26 +167,45 @@
                             <div id="hybridTimeModeContainer" class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-3">
                                 <div class="flex items-center justify-between">
                                     <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                                        <i data-lucide="clock" class="w-4 h-4 text-sky-400"></i>
-                                        Hora de Marcación (Modo Híbrido)
+                                        <i data-lucide="calendar-clock" class="w-4 h-4 text-sky-400"></i>
+                                        Fecha y Hora de Marcación (Modo Híbrido)
                                     </span>
                                     
                                     <div id="manualTimePermissionBlock" class="flex items-center gap-2">
                                         <label class="inline-flex items-center cursor-pointer">
                                             <input type="checkbox" id="useCustomTimeToggle" onchange="toggleCustomTimeMode()" class="sr-only peer">
                                             <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-white"></div>
-                                            <span class="ml-2 text-xs font-semibold text-slate-400 peer-checked:text-amber-400">Regularizar Hora Manual</span>
+                                            <span class="ml-2 text-xs font-semibold text-slate-400 peer-checked:text-amber-400">Regularizar Fecha / Hora Manual</span>
                                         </label>
                                     </div>
                                 </div>
 
-                                <!-- Time Display / Custom Picker -->
+                                <!-- Time Display / Custom Date & Time Picker -->
                                 <div id="currentTimeDisplay" class="text-xs text-slate-400 flex items-center gap-2">
-                                    <span>Marcando con la <strong>Hora Actual en vivo</strong></span>
+                                    <span>Marcando con la <strong>Fecha y Hora Actual en vivo</strong></span>
                                 </div>
-                                <div id="customTimeInputContainer" class="hidden flex items-center gap-3 pt-1">
-                                    <input type="time" id="customTimeInput" class="bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-sm rounded-xl px-3 py-1.5 outline-none focus:border-amber-400">
-                                    <span class="text-[11px] text-amber-400/80">Ajusta la hora real en que ingresó/salió en garita.</span>
+                                <div id="customTimeInputContainer" class="hidden space-y-3 pt-2 border-t border-slate-800/80">
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <div>
+                                            <label class="block text-[11px] font-semibold text-amber-300 mb-1">📅 Fecha a Regularizar *</label>
+                                            <input type="date" id="customDateInput" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] font-semibold text-emerald-300 mb-1">🟢 Hora Ingreso / Marca *</label>
+                                            <input type="time" id="customTimeInput" class="w-full bg-slate-800 border border-emerald-500/50 text-emerald-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-emerald-400">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] font-semibold text-rose-300 mb-1">🔴 Hora Salida (Opcional)</label>
+                                            <input type="time" id="customExitTimeInput" class="w-full bg-slate-800 border border-rose-500/40 text-rose-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-rose-400">
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-amber-950/30 border border-amber-500/20 rounded-xl p-2.5">
+                                        <span class="text-[11px] text-amber-300/90">💡 Si llenas <strong>Hora Ingreso + Hora Salida</strong>, puedes registrar el turno completo de ese día en 1 clic:</span>
+                                        <button type="button" onclick="submitCompleteManualShift()" class="shrink-0 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md shadow-amber-600/20 flex items-center gap-1.5">
+                                            <i data-lucide="check-check" class="w-4 h-4"></i>
+                                            <span>Registrar Turno Completo (Ingreso + Salida)</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -477,13 +496,13 @@
         </div>
     </div>
 
-    <!-- Modal: Carga Masiva (Lote de Garita) -->
-    <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+    <!-- Modal: Carga Masiva y Regularización por Días (Lote de Garita / Formatos Físicos) -->
+    <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2">
-                    <i data-lucide="layers" class="w-5 h-5 text-amber-400"></i>
-                    Ingreso Masivo por Lote (Garita)
+                    <i data-lucide="calendar-plus" class="w-5 h-5 text-amber-400"></i>
+                    Carga Masiva / Regularización por Días
                 </h3>
                 <button onclick="closeBatchModal()" class="text-slate-400 hover:text-white">
                     <i data-lucide="x" class="w-5 h-5"></i>
@@ -491,25 +510,72 @@
             </div>
 
             <div class="space-y-4 text-xs text-slate-300">
-                <p class="text-slate-400">Pega o escribe los DNIs o Nombres del grupo de personas que entraron juntas a la garita.</p>
+                <p class="text-slate-400">Ideal para cargar formatos físicos de días anteriores o grupos que ingresaron juntos. Selecciona la <strong>Fecha</strong>, la <strong>Hora de Ingreso</strong> y (opcionalmente) la <strong>Hora de Salida</strong> si deseas dejar el día ya completado con horas calculadas.</p>
 
+                <!-- Parámetros del Día -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
+                    <div>
+                        <label class="block font-semibold text-amber-300 mb-1">📅 Fecha del Formato *</label>
+                        <input type="date" id="batchDateInput" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-emerald-300 mb-1">🟢 Hora de Ingreso *</label>
+                        <input type="time" id="batchTimeInput" class="w-full bg-slate-800 border border-emerald-500/50 text-emerald-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-emerald-400">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-rose-300 mb-1">🔴 Hora Salida (Opcional)</label>
+                        <input type="time" id="batchExitTimeInput" class="w-full bg-slate-800 border border-rose-500/40 text-rose-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-rose-400">
+                    </div>
+                </div>
+
+                <!-- Selector Rápido de Personal con Checkboxes -->
+                <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <label class="font-bold text-slate-200 flex items-center gap-1.5">
+                            <i data-lucide="users" class="w-4 h-4 text-sky-400"></i>
+                            <span>1. Selecciona con un clic al Personal que asistió ese día:</span>
+                            <span id="batchSelectedCountBadge" class="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-bold">0 seleccionados</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="toggleAllBatchStaff(true)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px] font-semibold">Marcar Todos</button>
+                            <button type="button" onclick="toggleAllBatchStaff(false)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-[11px] font-semibold">Limpiar</button>
+                        </div>
+                    </div>
+
+                    <input type="text" id="batchStaffFilter" oninput="renderBatchStaffList()" placeholder="🔍 Filtrar personal por nombre, DNI o empresa (ej: OTINIANO, ABISERVI)..."
+                           class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-white placeholder-slate-500 outline-none focus:border-sky-500 text-xs">
+
+                    <div id="batchStaffCheckboxes" class="max-h-44 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 pr-1 pt-1">
+                        <!-- Injected dynamically from state.allEmployees -->
+                    </div>
+                </div>
+
+                <!-- Cuadro Opcional para Pegar DNIs / Nombres o Multi-Horario -->
                 <div>
-                    <label class="block font-semibold text-slate-200 mb-1">Hora de Ingreso Real del Grupo *</label>
-                    <input type="time" id="batchTimeInput" class="bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-sm rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+                    <label class="block font-semibold text-slate-300 mb-1">2. O pega DNIs / Nombres adicionales (Opcional - Uno por línea)</label>
+                    <textarea id="batchListInput" rows="3" placeholder="Puedes pegar solo DNI/Nombre (usa la fecha y hora de arriba) o formato avanzado:&#10;49083884, 07:30, 17:30&#10;2026-10-28, Contreras Montes Luz, 08:00, 18:00"
+                              class="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white outline-none focus:border-amber-500 font-mono text-xs"></textarea>
                 </div>
 
                 <div>
-                    <label class="block font-semibold text-slate-200 mb-1">Lista de DNIs o Nombres (Uno por línea) *</label>
-                    <textarea id="batchListInput" rows="5" placeholder="49083884&#10;71234567&#10;Contreras Montes Luz"
-                              class="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white outline-none focus:border-amber-500 font-mono text-xs"></textarea>
+                    <label class="block font-semibold text-slate-300 mb-1">Observación / Nota del Lote (Opcional)</label>
+                    <input type="text" id="batchNotesInput" placeholder="Ej: Regularización formato físico vigilancia..."
+                           class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-amber-500 text-xs">
                 </div>
             </div>
 
-            <div class="flex justify-end gap-3 pt-3 border-t border-slate-800">
-                <button onclick="closeBatchModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-semibold">Cancelar</button>
-                <button onclick="submitBatchCheckIn()" class="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold shadow-lg shadow-amber-600/30">
-                    Registrar Lote de Ingresos
-                </button>
+            <div class="flex flex-wrap justify-between items-center gap-3 pt-3 border-t border-slate-800">
+                <button onclick="closeBatchModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-semibold text-xs">Cancelar</button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="submitBatchCheckIn(true)" class="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-lg shadow-sky-600/30 flex items-center gap-1.5">
+                        <i data-lucide="calendar-check" class="w-4 h-4"></i>
+                        <span>Guardar este Día y Seguir con Otro Día</span>
+                    </button>
+                    <button onclick="submitBatchCheckIn(false)" class="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30 flex items-center gap-1.5">
+                        <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+                        <span>Registrar Lote y Cerrar</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -655,6 +721,6 @@
     </div>
 
     <!-- Application Script with Cache Buster -->
-    <script src="app.js?v=2.0"></script>
+    <script src="app.js?v=3.0"></script>
 </body>
 </html>
