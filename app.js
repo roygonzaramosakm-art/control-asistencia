@@ -12,7 +12,16 @@ let state = {
     userRole: localStorage.getItem('control_asistencia_user_role') || 'guard' // Options: 'guard', 'priscila', 'roy'
 };
 
-// Normaliza cualquier fecha de Google Sheets o input a formato YYYY-MM-DD
+// Obtiene la fecha actual en hora local de Perú/PC (YYYY-MM-DD) sin desfase UTC nocturno
+function getTodayLocalString() {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+// Normaliza cualquier fecha de Google Sheets o input a formato YYYY-MM-DD sin desfase de zona horaria
 function normalizeDateString(val) {
     if (!val) return '';
     const str = String(val).trim();
@@ -23,29 +32,51 @@ function normalizeDateString(val) {
     if (dmyMatch) {
         return `${dmyMatch[3]}-${String(dmyMatch[2]).padStart(2, '0')}-${String(dmyMatch[1]).padStart(2, '0')}`;
     }
+    // Si viene como cadena Date de Google Sheets con 00:00:00 (ej. "Mon Nov 02 2026 00:00:00 GMT..."), extraer literal
+    const monthNames = {
+        jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+        jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    if (str.includes('00:00:00')) {
+        const textDateMatch = str.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{4})\b/i);
+        if (textDateMatch) {
+            const mm = monthNames[textDateMatch[1].toLowerCase()];
+            const dd = String(textDateMatch[2]).padStart(2, '0');
+            const yyyy = textDateMatch[3];
+            return `${yyyy}-${mm}-${dd}`;
+        }
+    }
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
+        // Compensar +6 horas para evitar que medianoche GMT/EDT retroceda al día anterior en GMT-5 (Perú)
+        const adjusted = new Date(d.getTime() + 6 * 3600 * 1000);
+        const yyyy = adjusted.getFullYear();
+        const mm = String(adjusted.getMonth() + 1).padStart(2, '0');
+        const dd = String(adjusted.getDate()).padStart(2, '0');
         return `${yyyy}-${mm}-${dd}`;
     }
     return str;
 }
 
-// Busca si el empleado ya tiene un registro en una fecha específica (YYYY-MM-DD)
-function getEmployeeRecordForDate(dni, fechaStr) {
-    if (!dni || !fechaStr) return null;
-    const cleanDni = String(dni).replace(/\s+/g, '');
+// Busca si el empleado ya tiene un registro en una fecha específica (por DNI o por Nombre Completo)
+function getEmployeeRecordForDate(dni, fechaStr, nombre = '') {
+    if ((!dni && !nombre) || !fechaStr) return null;
+    const cleanDni = String(dni || '').replace(/\s+/g, '').toLowerCase();
+    const nameKey = nombre ? getSortedNameTokensKey(nombre) : '';
     const targetDate = normalizeDateString(fechaStr);
     const records = state.allRecords && state.allRecords.length > 0
         ? state.allRecords
         : (state.todayData.registros_hoy || []);
-    // Priorizar turno activo o el último registro de esa fecha
-    const matches = records.filter(r => 
-        String(r.dni).replace(/\s+/g, '') === cleanDni &&
-        normalizeDateString(r.fecha) === targetDate
-    );
+    // Coincidir por DNI o por Nombre en la misma fecha
+    const matches = records.filter(r => {
+        const recDate = normalizeDateString(r.fecha);
+        if (recDate !== targetDate) return false;
+        const rDni = String(r.dni || '').replace(/\s+/g, '').toLowerCase();
+        const rNameKey = r.nombre ? getSortedNameTokensKey(r.nombre) : '';
+        const sameDni = cleanDni && rDni === cleanDni;
+        const sameName = nameKey && rNameKey && rNameKey === nameKey;
+        return sameDni || sameName;
+    });
     if (matches.length === 0) return null;
     return matches[matches.length - 1];
 }
@@ -312,14 +343,59 @@ function updateSheetsStatusBadge() {
     }
 }
 
-// Carga inicial y almacenamiento en memoria
+// Normaliza texto (sin tildes, minúsculas, espacios colapsados)
+function normalizePersonText(str) {
+    if (!str) return '';
+    return String(str)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Clave de palabras ordenadas (detecta "Joel Salcedo Marcas" === "Salcedo Marcas Joel")
+function getSortedNameTokensKey(str) {
+    const norm = normalizePersonText(str);
+    if (!norm) return '';
+    return norm.split(' ').filter(Boolean).sort().join(' ');
+}
+
+// Deduplica la lista de empleados en memoria (por DNI o por Nombre idéntico)
+function deduplicateEmployeeList(rawList) {
+    const seenDnis = new Set();
+    const seenNames = new Set();
+    const unique = [];
+
+    (rawList || []).forEach(p => {
+        const dniClean = String(p.dni || '').replace(/\s+/g, '').trim().toLowerCase();
+        const nameKey = getSortedNameTokensKey(p.nombre);
+        if (!dniClean && !nameKey) return;
+        if (dniClean && seenDnis.has(dniClean)) return;
+        if (nameKey && seenNames.has(nameKey)) return;
+
+        if (dniClean) seenDnis.add(dniClean);
+        if (nameKey) seenNames.add(nameKey);
+
+        unique.push({
+            dni: String(p.dni).trim(),
+            nombre: String(p.nombre).trim(),
+            empresa: (p.empresa || 'INTERNO').trim(),
+            estado_hoy: p.estado_hoy || 'FUERA'
+        });
+    });
+
+    return unique;
+}
+
+// Carga inicial y almacenamiento en memoria (sin duplicados)
 async function loadEmployees() {
     try {
         const res = await fetch('/api/empleados');
         if (res.ok) {
             const data = await res.json();
-            state.allEmployees = data;
-            return data;
+            state.allEmployees = deduplicateEmployeeList(data);
+            return state.allEmployees;
         }
     } catch (err) {}
 
@@ -329,12 +405,7 @@ async function loadEmployees() {
         const res = await fetch(`${state.sheetsUrl}?action=get_personal`);
         const data = await res.json();
         if (data.status === 'success') {
-            state.allEmployees = data.data.map(p => ({
-                dni: String(p.dni).trim(),
-                nombre: p.nombre,
-                empresa: p.empresa || 'INTERNO',
-                estado_hoy: 'FUERA'
-            }));
+            state.allEmployees = deduplicateEmployeeList(data.data);
         }
     } catch (err) {
         console.error("Error cargando empleados de Google Sheets:", err);
@@ -608,7 +679,7 @@ function selectEmployee(emp) {
     empAvatar.textContent = getInitials(emp.nombre);
 
     const targetDate = getSelectedDate();
-    const recOnDate = getEmployeeRecordForDate(emp.dni, targetDate);
+    const recOnDate = getEmployeeRecordForDate(emp.dni, targetDate, emp.nombre);
 
     const doubleAlert = document.getElementById('doubleRegistrationAlert');
     const doubleAlertText = document.getElementById('doubleRegAlertText');
@@ -664,7 +735,10 @@ async function submitCheckIn() {
     const exitInput = document.getElementById('customExitTimeInput');
 
     // Verificar duplicidad en la fecha seleccionada (tanto hoy como en regularización de fechas pasadas)
-    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha);
+    if (!state.allRecords || state.allRecords.length === 0) {
+        await loadTodayData();
+    }
+    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha, state.selectedEmployee.nombre);
     if (existingRec) {
         showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
         selectEmployee(state.selectedEmployee);
@@ -726,6 +800,18 @@ async function submitCheckIn() {
         playSuccessSound();
         showToast(`Ingreso registrado (${fecha} - ${hora_ingreso}) por ${userEmail}`, 'success');
         recordNotes.value = '';
+        // Registrar inmediatamente en memoria para bloquear doble clic en la misma fecha
+        state.allRecords.push({
+            dni: state.selectedEmployee.dni,
+            nombre: state.selectedEmployee.nombre,
+            empresa: state.selectedEmployee.empresa,
+            fecha: normalizeDateString(fecha),
+            hora_ingreso: hora_ingreso,
+            hora_salida: '',
+            estado: 'EN_TURNO',
+            notas: notes,
+            registrado_por: userEmail
+        });
         if (fecha === todayStr) {
             state.selectedEmployee.estado_hoy = 'EN_TURNO';
             state.selectedEmployee.hora_ingreso_hoy = hora_ingreso;
@@ -756,7 +842,10 @@ async function submitCompleteManualShift() {
     const rawSalida = customExitTimeInput ? customExitTimeInput.value : '';
 
     // Prevención de duplicidad en la misma fecha
-    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha);
+    if (!state.allRecords || state.allRecords.length === 0) {
+        await loadTodayData();
+    }
+    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha, state.selectedEmployee.nombre);
     if (existingRec) {
         showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
         selectEmployee(state.selectedEmployee);
@@ -1279,6 +1368,7 @@ function triggerQuickAdd(query) {
     } else {
         document.getElementById('newNombre').value = query;
     }
+    checkNewPersonDuplicate();
 }
 
 // Render Dashboard Data
@@ -1429,23 +1519,182 @@ function filterHistoryTable() {
     applyTableFilters();
 }
 
-// Modal Handlers
+// Modal Handlers (Nuevo Personal con Filtro Anti-Duplicidad en Vivo)
 function openNewPersonModal() {
     document.getElementById('newPersonModal').classList.remove('hidden');
+    const dniInput = document.getElementById('newDni');
+    const nombreInput = document.getElementById('newNombre');
+    const empresaInput = document.getElementById('newEmpresa');
+    if (dniInput) dniInput.value = '';
+    if (nombreInput) nombreInput.value = '';
+    if (empresaInput) empresaInput.value = 'INTERNO';
+    checkNewPersonDuplicate();
+    lucide.createIcons();
 }
 
 function closeNewPersonModal() {
     document.getElementById('newPersonModal').classList.add('hidden');
 }
 
+function findDuplicateOrSimilarNewPerson(rawDni, rawNombre) {
+    const cleanDni = String(rawDni || '').replace(/\s+/g, '').trim().toLowerCase();
+    const normNombre = normalizePersonText(rawNombre);
+    const sortedTokens = getSortedNameTokensKey(rawNombre);
+    const inputWords = normNombre.split(' ').filter(w => w.length >= 3);
+
+    let exactMatch = null;
+    const similarMatches = [];
+
+    for (const emp of state.allEmployees) {
+        const empDni = String(emp.dni || '').replace(/\s+/g, '').trim().toLowerCase();
+        const empNormName = normalizePersonText(emp.nombre);
+        const empSortedTokens = getSortedNameTokensKey(emp.nombre);
+
+        // 1. Coincidencia exacta por DNI o por Nombre Completo (incluso si invirtieron apellidos y nombres)
+        const isExactDni = cleanDni.length >= 4 && empDni === cleanDni;
+        const isExactName = normNombre.length >= 4 && (empNormName === normNombre || empSortedTokens === sortedTokens);
+
+        if (isExactDni || isExactName) {
+            exactMatch = { emp, reason: isExactDni && isExactName ? 'DNI y Nombre idénticos' : (isExactDni ? 'Mismo DNI' : 'Mismo Nombre') };
+            break;
+        }
+
+        // 2. Coincidencia parcial / similar para alertar antes de duplicar
+        const isSimilarDni = cleanDni.length >= 3 && empDni.includes(cleanDni);
+        const isSubstringName = normNombre.length >= 3 && (empNormName.includes(normNombre) || normNombre.includes(empNormName));
+        const sharedWordsCount = inputWords.filter(w => empNormName.includes(w)).length;
+        const isMultiWordSimilar = inputWords.length >= 2 && sharedWordsCount >= 2;
+
+        if (isSimilarDni || isSubstringName || isMultiWordSimilar) {
+            similarMatches.push(emp);
+        }
+    }
+
+    return { exactMatch, similarMatches: similarMatches.slice(0, 4) };
+}
+
+function useExistingPersonFromModal(dni) {
+    const target = state.allEmployees.find(e => String(e.dni).trim() === String(dni).trim());
+    if (target) {
+        closeNewPersonModal();
+        selectEmployee(target);
+        showToast(`✅ Personal existente seleccionado: ${target.nombre}`, 'info');
+    }
+}
+
+function checkNewPersonDuplicate() {
+    const dniInput = document.getElementById('newDni');
+    const nombreInput = document.getElementById('newNombre');
+    const container = document.getElementById('newPersonDuplicateContainer');
+    const btnSave = document.getElementById('btnSaveNewPerson');
+
+    if (!container || !btnSave) return;
+
+    const rawDni = dniInput ? dniInput.value.trim() : '';
+    const rawNombre = nombreInput ? nombreInput.value.trim() : '';
+
+    if (!rawDni && !rawNombre) {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        btnSave.disabled = false;
+        btnSave.className = "px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-600/30 transition-all";
+        btnSave.textContent = 'Guardar y Seleccionar';
+        return;
+    }
+
+    const { exactMatch, similarMatches } = findDuplicateOrSimilarNewPerson(rawDni, rawNombre);
+
+    if (exactMatch) {
+        const emp = exactMatch.emp;
+        container.classList.remove('hidden');
+        container.className = "rounded-2xl border p-3.5 text-xs space-y-2.5 bg-rose-950/80 border-rose-500/60 text-rose-200";
+        container.innerHTML = `
+            <div class="flex items-start gap-2">
+                <span class="text-base leading-none">🚫</span>
+                <div class="space-y-1 flex-1">
+                    <p class="font-bold text-rose-300">DUPLICIDAD BLOQUEADA (${exactMatch.reason})</p>
+                    <p class="text-[11px] text-rose-200/90">Esta persona <strong>ya está registrada</strong> en la Base de Datos de Personal:</p>
+                </div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-900/90 border border-rose-500/40 flex items-center justify-between gap-2">
+                <div>
+                    <div class="font-bold text-white text-xs">${emp.nombre}</div>
+                    <div class="text-[11px] text-slate-400 font-mono">DNI: ${emp.dni} &bull; <span class="text-indigo-300 font-semibold">${emp.empresa || 'INTERNO'}</span></div>
+                </div>
+                <button type="button" onclick="useExistingPersonFromModal('${emp.dni}')"
+                        class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shrink-0 shadow">
+                    ✅ Usar Existente
+                </button>
+            </div>
+        `;
+        btnSave.disabled = true;
+        btnSave.className = "px-5 py-2.5 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 text-xs font-bold cursor-not-allowed opacity-60";
+        btnSave.textContent = '🔒 Ya Existe en Base de Datos';
+        return;
+    }
+
+    // Habilitar botón si no hay duplicado exacto
+    btnSave.disabled = false;
+    btnSave.className = "px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-600/30 transition-all";
+    btnSave.textContent = 'Guardar y Seleccionar';
+
+    if (similarMatches.length > 0) {
+        container.classList.remove('hidden');
+        container.className = "rounded-2xl border p-3 text-xs space-y-2 bg-amber-950/60 border-amber-500/40 text-amber-200";
+        const itemsHtml = similarMatches.map(emp => `
+            <div class="p-2 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-2">
+                <div class="truncate">
+                    <div class="font-bold text-white text-xs truncate">${emp.nombre}</div>
+                    <div class="text-[10px] text-slate-400 font-mono">DNI: ${emp.dni} &bull; ${emp.empresa || 'INTERNO'}</div>
+                </div>
+                <button type="button" onclick="useExistingPersonFromModal('${emp.dni}')"
+                        class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-[10px] shrink-0">
+                    Seleccionar
+                </button>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <div class="font-bold text-amber-300 text-[11px] flex items-center gap-1.5">
+                <span>🔍 Personal similar ya registrado (verifica antes de crear):</span>
+            </div>
+            <div class="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                ${itemsHtml}
+            </div>
+        `;
+    } else {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+    }
+}
+
+let isSavingNewPerson = false;
+
 async function saveNewPerson() {
+    if (isSavingNewPerson) return;
+
     const dni = document.getElementById('newDni').value.trim();
     const nombre = document.getElementById('newNombre').value.trim();
     const empresa = document.getElementById('newEmpresa').value.trim() || 'INTERNO';
+    const btnSave = document.getElementById('btnSaveNewPerson');
 
     if (!dni || !nombre) {
         showToast('Completa el DNI y el Nombre Completo', 'error');
         return;
+    }
+
+    // Validación estricta Anti-Duplicidad (por DNI o por Nombre)
+    const { exactMatch } = findDuplicateOrSimilarNewPerson(dni, nombre);
+    if (exactMatch) {
+        showToast(`🚫 Duplicado bloqueado: "${exactMatch.emp.nombre}" (DNI: ${exactMatch.emp.dni}) ya existe. Se seleccionó su ficha existente.`, 'error');
+        useExistingPersonFromModal(exactMatch.emp.dni);
+        return;
+    }
+
+    isSavingNewPerson = true;
+    if (btnSave) {
+        btnSave.disabled = true;
+        btnSave.textContent = 'Guardando...';
     }
 
     try {
@@ -1466,6 +1715,11 @@ async function saveNewPerson() {
 
     if (!state.sheetsUrl) {
         showToast('Configura la URL de Google Sheets primero', 'error');
+        isSavingNewPerson = false;
+        if (btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = 'Guardar y Seleccionar';
+        }
         return;
     }
 
@@ -1482,14 +1736,20 @@ async function saveNewPerson() {
             })
         });
 
-        showToast(`Personal enviado a Google Sheets: ${nombre}`, 'success');
+        showToast(`Personal registrado sin duplicidad: ${nombre}`, 'success');
         closeNewPersonModal();
         const newEmp = { dni, nombre, empresa, estado_hoy: 'FUERA' };
-        state.allEmployees.push(newEmp);
+        state.allEmployees = deduplicateEmployeeList([...state.allEmployees, newEmp]);
         selectEmployee(newEmp);
         await refreshAllData();
     } catch (err) {
         showToast('Error al enviar personal a Google Sheets', 'error');
+    } finally {
+        isSavingNewPerson = false;
+        if (btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = 'Guardar y Seleccionar';
+        }
     }
 }
 
