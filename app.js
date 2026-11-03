@@ -740,7 +740,7 @@ async function submitCheckIn() {
     }
     const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha, state.selectedEmployee.nombre);
     if (existingRec) {
-        showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
+        showDuplicateBlockedModal([{ emp: state.selectedEmployee, fecha: fecha, existingRec: existingRec }], 0);
         selectEmployee(state.selectedEmployee);
         return;
     }
@@ -847,7 +847,7 @@ async function submitCompleteManualShift() {
     }
     const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha, state.selectedEmployee.nombre);
     if (existingRec) {
-        showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
+        showDuplicateBlockedModal([{ emp: state.selectedEmployee, fecha: fecha, existingRec: existingRec }], 0);
         selectEmployee(state.selectedEmployee);
         return;
     }
@@ -1063,6 +1063,76 @@ async function submitCheckOut(forceConfirm = false) {
     }
 }
 
+// Cuadro de Mensaje Modal cuando un personal ya se encuentra registrado en esa fecha
+function playErrorSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(260, ctx.currentTime);
+        osc.frequency.setValueAtTime(180, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+    } catch (e) {}
+}
+
+function showDuplicateBlockedModal(blockedItems, registeredCount = 0) {
+    const modal = document.getElementById('duplicateBlockedModal');
+    const mainMsg = document.getElementById('duplicateBlockedMainMessage');
+    const listContainer = document.getElementById('duplicateBlockedList');
+
+    playErrorSound();
+
+    if (!modal || !listContainer) {
+        const names = (blockedItems || []).map(b => `${b.emp.nombre} (${b.fecha})`).join(', ');
+        showToast(`🚫 No se puede registrar porque ya se encuentra registrado: ${names}`, 'error');
+        return;
+    }
+
+    if (mainMsg) {
+        if (registeredCount > 0) {
+            mainMsg.innerHTML = `Se guardaron <strong>${registeredCount}</strong> registro(s) nuevos, pero el siguiente personal <strong>NO se puede registrar porque ya se encuentra registrado</strong> en esa fecha:`;
+        } else {
+            mainMsg.innerHTML = `<strong>No se puede registrar</strong> porque el personal ingresado <strong>ya se encuentra registrado</strong> en la fecha seleccionada:`;
+        }
+    }
+
+    listContainer.innerHTML = (blockedItems || []).map(item => {
+        const emp = item.emp || {};
+        const rec = item.existingRec || {};
+        const cleanIn = cleanTimeString(rec.hora_ingreso) || '--';
+        const cleanOut = cleanTimeString(rec.hora_salida);
+        const statusText = rec.estado === 'EN_TURNO' ? '🟢 EN TURNO' : '✅ COMPLETADO';
+        return `
+            <div class="p-3 rounded-2xl bg-slate-950 border border-rose-500/40 flex flex-col gap-1">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="font-bold text-white text-xs">${emp.nombre || 'Personal'}</span>
+                    <span class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">Ya Registrado</span>
+                </div>
+                <div class="text-[11px] text-slate-300 font-mono">
+                    DNI: <strong>${emp.dni || '--'}</strong> &bull; Fecha: <strong class="text-amber-300">${item.fecha}</strong>
+                </div>
+                <div class="text-[11px] text-emerald-300 font-mono">
+                    Ingreso: <strong>${cleanIn}</strong> ${cleanOut ? `| Salida: <strong class="text-amber-300">${cleanOut}</strong>` : ''} &bull; <span>${statusText}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    modal.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeDuplicateBlockedModal() {
+    const modal = document.getElementById('duplicateBlockedModal');
+    if (modal) modal.classList.add('hidden');
+}
+
 // Carga Masiva y Regularización por Días con Filtro Anti-Duplicidad
 let selectedBatchDnis = new Set();
 
@@ -1093,11 +1163,13 @@ function onBatchDateChange() {
     const batchDate = getBatchSelectedDate();
     // Desmarcar automáticamente cualquier persona que ya tenga registro en esa fecha
     Array.from(selectedBatchDnis).forEach(dniKey => {
-        if (getEmployeeRecordForDate(dniKey, batchDate)) {
+        const emp = state.allEmployees.find(e => String(e.dni).trim() === dniKey);
+        if (getEmployeeRecordForDate(dniKey, batchDate, emp ? emp.nombre : '')) {
             selectedBatchDnis.delete(dniKey);
         }
     });
     renderBatchStaffList();
+    checkBatchTextareaDuplicates();
 }
 
 function updateBatchSelectedCount() {
@@ -1110,9 +1182,14 @@ function updateBatchSelectedCount() {
 function toggleBatchStaffItem(dni) {
     const key = String(dni).trim();
     const batchDate = getBatchSelectedDate();
-    const existingRec = getEmployeeRecordForDate(key, batchDate);
+    const emp = state.allEmployees.find(e => String(e.dni).trim() === key);
+    const existingRec = getEmployeeRecordForDate(key, batchDate, emp ? emp.nombre : '');
     if (existingRec) {
-        showToast(`🚫 Este personal ya está registrado el día ${batchDate} (${cleanTimeString(existingRec.hora_ingreso)})`, 'error');
+        showDuplicateBlockedModal([{
+            emp: emp || { dni: key, nombre: existingRec.nombre || key },
+            fecha: batchDate,
+            existingRec: existingRec
+        }], 0);
         return;
     }
     if (selectedBatchDnis.has(key)) {
@@ -1134,7 +1211,7 @@ function toggleAllBatchStaff(selectAll) {
         // Solo marcar los pendientes que NO estén registrados en esa fecha
         filtered.forEach(e => {
             const dniKey = String(e.dni).trim();
-            if (!getEmployeeRecordForDate(dniKey, batchDate)) {
+            if (!getEmployeeRecordForDate(dniKey, batchDate, e.nombre)) {
                 selectedBatchDnis.add(dniKey);
             }
         });
@@ -1154,7 +1231,7 @@ function renderBatchStaffList() {
     const hideRegistered = hideRegisteredToggle ? hideRegisteredToggle.checked : false;
 
     // Contar cuántos de toda la base ya están registrados en esta fecha
-    const alreadyRegisteredCount = state.allEmployees.filter(e => Boolean(getEmployeeRecordForDate(e.dni, batchDate))).length;
+    const alreadyRegisteredCount = state.allEmployees.filter(e => Boolean(getEmployeeRecordForDate(e.dni, batchDate, e.nombre))).length;
     const alreadyBadge = document.getElementById('batchAlreadyRegisteredBadge');
     if (alreadyBadge) {
         alreadyBadge.textContent = `${alreadyRegisteredCount} ya registrados en ${batchDate}`;
@@ -1165,7 +1242,7 @@ function renderBatchStaffList() {
     let list = filterEmployeesInMemory(query);
 
     if (hideRegistered) {
-        list = list.filter(emp => !getEmployeeRecordForDate(emp.dni, batchDate));
+        list = list.filter(emp => !getEmployeeRecordForDate(emp.dni, batchDate, emp.nombre));
     }
 
     container.innerHTML = '';
@@ -1177,13 +1254,13 @@ function renderBatchStaffList() {
 
     list.forEach(emp => {
         const dniKey = String(emp.dni).trim();
-        const existingRec = getEmployeeRecordForDate(dniKey, batchDate);
+        const existingRec = getEmployeeRecordForDate(dniKey, batchDate, emp.nombre);
         const isChecked = selectedBatchDnis.has(dniKey) && !existingRec;
         const div = document.createElement('div');
 
         if (existingRec) {
             const cleanIn = cleanTimeString(existingRec.hora_ingreso);
-            div.onclick = () => showToast(`🚫 ${emp.nombre} ya fue registrado el ${batchDate} (${cleanIn})`, 'error');
+            div.onclick = () => showDuplicateBlockedModal([{ emp, fecha: batchDate, existingRec }], 0);
             div.className = "p-2 rounded-xl border cursor-not-allowed flex items-center justify-between bg-emerald-950/30 border-emerald-500/30 text-slate-400 opacity-75";
             div.innerHTML = `
                 <div class="flex items-center gap-2 min-w-0 pr-2">
@@ -1227,6 +1304,77 @@ function renderBatchStaffList() {
     updateBatchSelectedCount();
 }
 
+// Verifica en vivo si algún DNI o Nombre escrito en el cuadro de texto de Carga Masiva ya está registrado en esa fecha
+function checkBatchTextareaDuplicates() {
+    const textarea = document.getElementById('batchListInput');
+    const warningBox = document.getElementById('batchTextareaDuplicateWarning');
+    if (!textarea || !warningBox) return;
+
+    const rawList = textarea.value.trim();
+    if (!rawList) {
+        warningBox.classList.add('hidden');
+        warningBox.innerHTML = '';
+        return;
+    }
+
+    const defaultFecha = getBatchSelectedDate();
+    const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const duplicatesFound = [];
+
+    for (const line of lines) {
+        const parts = line.split(/[,\t;|]+/).map(p => p.trim()).filter(Boolean);
+        let lineFecha = defaultFecha;
+        let term = line;
+
+        if (parts.length >= 2) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+                lineFecha = parts[0];
+                term = parts[1];
+            } else {
+                term = parts[0];
+            }
+        }
+
+        const emp = state.allEmployees.find(e => 
+            (e.dni && e.dni.replace(/\s+/g, '') === term.replace(/\s+/g, '')) || 
+            (e.nombre && normalizePersonText(e.nombre).includes(normalizePersonText(term)))
+        );
+
+        const dniToCheck = emp ? emp.dni : term;
+        const nameToCheck = emp ? emp.nombre : term;
+        const existingRec = getEmployeeRecordForDate(dniToCheck, lineFecha, nameToCheck);
+
+        if (existingRec) {
+            duplicatesFound.push({
+                emp: emp || { dni: existingRec.dni || term, nombre: existingRec.nombre || term },
+                fecha: lineFecha,
+                existingRec: existingRec
+            });
+        }
+    }
+
+    if (duplicatesFound.length > 0) {
+        warningBox.classList.remove('hidden');
+        warningBox.innerHTML = `
+            <div class="font-bold text-rose-300 flex items-center gap-1.5">
+                <span>🚫 No se puede registrar (Personal ya se encuentra registrado en la fecha):</span>
+            </div>
+            <div class="space-y-1">
+                ${duplicatesFound.map(d => {
+                    const cleanIn = cleanTimeString(d.existingRec.hora_ingreso) || '--';
+                    const cleanOut = cleanTimeString(d.existingRec.hora_salida);
+                    return `<div class="text-[11px] font-mono bg-slate-950/80 px-2.5 py-1.5 rounded-xl border border-rose-500/40 text-rose-200">
+                        <strong>${d.emp.nombre}</strong> (DNI: ${d.emp.dni}) &bull; Fecha: <strong>${d.fecha}</strong> &bull; Ingreso: ${cleanIn}${cleanOut ? ' | Salida: ' + cleanOut : ''}
+                    </div>`;
+                }).join('')}
+            </div>
+        `;
+    } else {
+        warningBox.classList.add('hidden');
+        warningBox.innerHTML = '';
+    }
+}
+
 async function submitBatchCheckIn(keepOpen = false) {
     const dateInput = document.getElementById('batchDateInput');
     const rawTime = document.getElementById('batchTimeInput').value;
@@ -1239,6 +1387,10 @@ async function submitBatchCheckIn(keepOpen = false) {
     const defaultHoraIngreso = rawTime ? (rawTime.length === 5 ? rawTime + ':00' : rawTime) : new Date().toLocaleTimeString('es-ES');
     const defaultHoraSalida = rawExitTime ? (rawExitTime.length === 5 ? rawExitTime + ':00' : rawExitTime) : '';
     const userEmail = getUserEmail();
+
+    if (!state.allRecords || state.allRecords.length === 0) {
+        await loadTodayData();
+    }
 
     const entriesToProcess = [];
 
@@ -1280,7 +1432,7 @@ async function submitBatchCheckIn(keepOpen = false) {
 
             let emp = state.allEmployees.find(e => 
                 (e.dni && e.dni.replace(/\s+/g, '') === term.replace(/\s+/g, '')) || 
-                (e.nombre && e.nombre.toLowerCase().includes(term.toLowerCase()))
+                (e.nombre && normalizePersonText(e.nombre).includes(normalizePersonText(term)))
             );
 
             if (!emp) {
@@ -1306,14 +1458,19 @@ async function submitBatchCheckIn(keepOpen = false) {
     }
 
     let registeredCount = 0;
-    let skippedDuplicateCount = 0;
+    const blockedDuplicates = [];
 
     for (const item of entriesToProcess) {
         const { emp, fecha, horaIngreso, horaSalida } = item;
 
-        // Filtro Anti-Duplicidad en la misma fecha
-        if (getEmployeeRecordForDate(emp.dni, fecha)) {
-            skippedDuplicateCount++;
+        // Filtro Anti-Duplicidad en la misma fecha (por DNI o por Nombre)
+        const existingRec = getEmployeeRecordForDate(emp.dni, fecha, emp.nombre);
+        if (existingRec) {
+            blockedDuplicates.push({
+                emp: emp,
+                fecha: fecha,
+                existingRec: existingRec
+            });
             continue;
         }
 
@@ -1340,19 +1497,41 @@ async function submitBatchCheckIn(keepOpen = false) {
                     registrado_por: userEmail
                 })
             });
+            state.allRecords.push({
+                dni: emp.dni,
+                nombre: emp.nombre,
+                empresa: emp.empresa,
+                fecha: normalizeDateString(fecha),
+                hora_ingreso: horaIngreso,
+                hora_salida: horaSalida || '',
+                horas_trabajadas: horasTrabajadas,
+                estado: estadoFinal,
+                notas: customNotes,
+                registrado_por: userEmail
+            });
             registeredCount++;
         } catch (e) {}
     }
 
+    // Si todos los intentados ya estaban registrados, NO cerrar la ventana y mostrar el Cuadro de Mensaje de Bloqueo
+    if (registeredCount === 0 && blockedDuplicates.length > 0) {
+        showDuplicateBlockedModal(blockedDuplicates, 0);
+        return;
+    }
+
     playSuccessSound();
-    const skipMsg = skippedDuplicateCount > 0 ? ` (${skippedDuplicateCount} omitidos por estar ya registrados ese día)` : '';
-    showToast(`✅ Día ${defaultFecha}: ${registeredCount} registros guardados${skipMsg}`, 'success');
+    showToast(`✅ Día ${defaultFecha}: ${registeredCount} registro(s) guardado(s) correctamente`, 'success');
+
+    if (blockedDuplicates.length > 0) {
+        showDuplicateBlockedModal(blockedDuplicates, registeredCount);
+    }
     
     selectedBatchDnis.clear();
     updateBatchSelectedCount();
     document.getElementById('batchListInput').value = '';
+    checkBatchTextareaDuplicates();
 
-    if (!keepOpen) {
+    if (!keepOpen && blockedDuplicates.length === 0) {
         closeBatchModal();
     }
     await refreshAllData();

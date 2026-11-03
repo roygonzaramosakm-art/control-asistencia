@@ -569,10 +569,13 @@
                 </div>
 
                 <!-- Cuadro Opcional para Pegar DNIs / Nombres o Multi-Horario -->
-                <div>
+                <div class="space-y-2">
                     <label class="block font-semibold text-slate-300 mb-1">2. O pega DNIs / Nombres adicionales (Opcional - Uno por línea)</label>
-                    <textarea id="batchListInput" rows="3" placeholder="Puedes pegar solo DNI/Nombre (usa la fecha y hora de arriba) o formato avanzado:&#10;49083884, 07:30, 17:30&#10;2026-10-28, Contreras Montes Luz, 08:00, 18:00"
+                    <textarea id="batchListInput" rows="3" oninput="checkBatchTextareaDuplicates()" placeholder="Puedes pegar solo DNI/Nombre (usa la fecha y hora de arriba) o formato avanzado:&#10;49083884, 07:30, 17:30&#10;2026-10-28, Contreras Montes Luz, 08:00, 18:00"
                               class="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white outline-none focus:border-amber-500 font-mono text-xs"></textarea>
+                    <div id="batchTextareaDuplicateWarning" class="hidden rounded-2xl border border-rose-500/60 bg-rose-950/80 p-3 text-xs text-rose-200 space-y-1.5">
+                        <!-- Injected dynamically by checkBatchTextareaDuplicates() -->
+                    </div>
                 </div>
 
                 <div>
@@ -743,7 +746,41 @@
         </div>
     </div>
 
+    <!-- Modal: Cuadro de Mensaje de Bloqueo por Duplicidad (Ya se encuentra registrado) -->
+    <div id="duplicateBlockedModal" class="hidden fixed inset-0 z-[60] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-rose-500/70 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-rose-400 flex items-center gap-2">
+                    <i data-lucide="shield-alert" class="w-6 h-6 text-rose-400"></i>
+                    <span>🚫 No se puede registrar</span>
+                </h3>
+                <button onclick="closeDuplicateBlockedModal()" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs text-slate-200">
+                <div class="bg-rose-950/70 border border-rose-500/40 rounded-2xl p-3.5 flex items-start gap-2.5">
+                    <span class="text-base leading-none">⚠️</span>
+                    <p id="duplicateBlockedMainMessage" class="text-rose-200 font-semibold leading-relaxed">
+                        No se puede registrar porque el personal ya se encuentra registrado en la fecha seleccionada:
+                    </p>
+                </div>
+
+                <div id="duplicateBlockedList" class="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    <!-- Injected dynamically by showDuplicateBlockedModal() -->
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-3 border-t border-slate-800">
+                <button onclick="closeDuplicateBlockedModal()" class="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30">
+                    Entendido / Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Application Script with Cache Buster -->
-    <script src="app.js?v=4.2"></script>
+    <script src="app.js?v=4.3"></script>
 </body>
 </html>
