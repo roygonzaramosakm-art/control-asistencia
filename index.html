@@ -100,12 +100,17 @@
                 
                 <!-- Search Box Card (Higher z-index z-40 so dropdown always sits cleanly on top) -->
                 <div class="bg-slate-800/60 backdrop-blur-xl border border-slate-700/80 rounded-3xl p-6 shadow-2xl relative z-40">
-                    <div class="flex justify-between items-center mb-3">
+                    <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
                         <label for="searchInput" class="text-sm font-semibold text-slate-300 flex items-center gap-2">
                             <i data-lucide="search" class="w-4 h-4 text-sky-400"></i>
                             Búsqueda Dinámica de Personal
                         </label>
-                        <span class="text-xs text-slate-400">Buscar por Nombre, DNI o Empresa</span>
+                        <!-- Filtro rápido de estado en el buscador para evitar duplicidad -->
+                        <div class="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-700/80 text-[11px]">
+                            <button type="button" id="searchFilterAll" onclick="setSearchStatusFilter('all')" class="px-2.5 py-1 rounded-lg bg-sky-600 text-white font-bold transition-all">Todos</button>
+                            <button type="button" id="searchFilterPending" onclick="setSearchStatusFilter('pending')" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-semibold transition-all">Sin Registro en Fecha</button>
+                            <button type="button" id="searchFilterRegistered" onclick="setSearchStatusFilter('registered')" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-semibold transition-all">✅ Ya Registrados</button>
+                        </div>
                     </div>
 
                     <div class="relative">
@@ -117,7 +122,7 @@
                     </div>
 
                     <!-- Dynamic Autocomplete Results Dropdown (Top z-index z-50 above all cards) -->
-                    <div id="searchResults" class="hidden absolute left-6 right-6 top-[105px] z-50 bg-slate-950 border-2 border-sky-500/60 rounded-2xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-800">
+                    <div id="searchResults" class="hidden absolute left-6 right-6 top-[112px] z-50 bg-slate-950 border-2 border-sky-500/60 rounded-2xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-800">
                         <!-- Items injected dynamically by JS -->
                     </div>
                 </div>
@@ -188,7 +193,7 @@
                                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         <div>
                                             <label class="block text-[11px] font-semibold text-amber-300 mb-1">📅 Fecha a Regularizar *</label>
-                                            <input type="date" id="customDateInput" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+                                            <input type="date" id="customDateInput" onchange="onCustomDateChange()" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
                                         </div>
                                         <div>
                                             <label class="block text-[11px] font-semibold text-emerald-300 mb-1">🟢 Hora Ingreso / Marca *</label>
@@ -201,7 +206,7 @@
                                     </div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-amber-950/30 border border-amber-500/20 rounded-xl p-2.5">
                                         <span class="text-[11px] text-amber-300/90">💡 Si llenas <strong>Hora Ingreso + Hora Salida</strong>, puedes registrar el turno completo de ese día en 1 clic:</span>
-                                        <button type="button" onclick="submitCompleteManualShift()" class="shrink-0 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md shadow-amber-600/20 flex items-center gap-1.5">
+                                        <button type="button" id="btnSubmitCompleteManualShift" onclick="submitCompleteManualShift()" class="shrink-0 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md shadow-amber-600/20 flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none">
                                             <i data-lucide="check-check" class="w-4 h-4"></i>
                                             <span>Registrar Turno Completo (Ingreso + Salida)</span>
                                         </button>
@@ -324,15 +329,20 @@
                 <div>
                     <h3 class="text-lg font-bold text-white flex items-center gap-2">
                         <i data-lucide="history" class="w-5 h-5 text-sky-400"></i>
-                        Registro de Asistencia del Día
+                        Registro de Asistencia por Fecha
                     </h3>
-                    <p class="text-xs text-slate-400">Detalle de ingresos, personas en turno y tiempos trabajados de hoy</p>
+                    <p class="text-xs text-slate-400">Filtra por fecha para verificar qué personal ya fue registrado y evitar duplicidades</p>
                 </div>
 
                 <!-- Filters & Export -->
-                <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                    <div class="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5">
+                        <span class="text-[11px] font-semibold text-amber-300">📅 Fecha:</span>
+                        <input type="date" id="filterTableDateInput" onchange="applyTableFilters()" class="bg-transparent text-xs text-white font-mono outline-none">
+                        <button type="button" onclick="clearTableDateFilter()" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold" title="Ver todas las fechas">Todas</button>
+                    </div>
                     <div class="relative flex-1 md:w-48">
-                        <input type="text" id="filterTableInput" onkeyup="filterHistoryTable()" placeholder="Filtrar registros..." 
+                        <input type="text" id="filterTableInput" oninput="applyTableFilters()" placeholder="Buscar nombre, DNI o empresa..." 
                                class="w-full bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 rounded-xl px-3 py-2 outline-none focus:border-sky-500">
                     </div>
                     <button onclick="exportToCSV()" class="flex items-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold px-3 py-2 rounded-xl transition-all">
@@ -347,6 +357,7 @@
                 <table class="w-full text-left text-sm text-slate-300">
                     <thead class="text-xs uppercase bg-slate-900/80 text-slate-400 border-b border-slate-700/80">
                         <tr>
+                            <th class="px-4 py-3 font-semibold">Fecha</th>
                             <th class="px-4 py-3 font-semibold">Personal / Tercero</th>
                             <th class="px-4 py-3 font-semibold">DNI</th>
                             <th class="px-4 py-3 font-semibold">Empresa</th>
@@ -516,7 +527,7 @@
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
                     <div>
                         <label class="block font-semibold text-amber-300 mb-1">📅 Fecha del Formato *</label>
-                        <input type="date" id="batchDateInput" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+                        <input type="date" id="batchDateInput" onchange="onBatchDateChange()" class="w-full bg-slate-800 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
                     </div>
                     <div>
                         <label class="block font-semibold text-emerald-300 mb-1">🟢 Hora de Ingreso *</label>
@@ -528,22 +539,29 @@
                     </div>
                 </div>
 
-                <!-- Selector Rápido de Personal con Checkboxes -->
+                <!-- Selector Rápido de Personal con Checkboxes + Filtro Anti-Duplicidad -->
                 <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <label class="font-bold text-slate-200 flex items-center gap-1.5">
                             <i data-lucide="users" class="w-4 h-4 text-sky-400"></i>
-                            <span>1. Selecciona con un clic al Personal que asistió ese día:</span>
+                            <span>1. Selecciona al Personal que asistió ese día:</span>
                             <span id="batchSelectedCountBadge" class="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-bold">0 seleccionados</span>
+                            <span id="batchAlreadyRegisteredBadge" class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">0 ya registrados en fecha</span>
                         </label>
                         <div class="flex items-center gap-2">
-                            <button type="button" onclick="toggleAllBatchStaff(true)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px] font-semibold">Marcar Todos</button>
+                            <button type="button" onclick="toggleAllBatchStaff(true)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px] font-semibold">Marcar Pendientes</button>
                             <button type="button" onclick="toggleAllBatchStaff(false)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-[11px] font-semibold">Limpiar</button>
                         </div>
                     </div>
 
-                    <input type="text" id="batchStaffFilter" oninput="renderBatchStaffList()" placeholder="🔍 Filtrar personal por nombre, DNI o empresa (ej: OTINIANO, ABISERVI)..."
-                           class="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-white placeholder-slate-500 outline-none focus:border-sky-500 text-xs">
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <input type="text" id="batchStaffFilter" oninput="renderBatchStaffList()" placeholder="🔍 Filtrar personal por nombre, DNI o empresa (ej: OTINIANO, ABISERVI)..."
+                               class="flex-1 bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-white placeholder-slate-500 outline-none focus:border-sky-500 text-xs">
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 cursor-pointer shrink-0">
+                            <input type="checkbox" id="hideAlreadyRegisteredBatchToggle" onchange="renderBatchStaffList()" class="rounded border-slate-600 text-sky-500 focus:ring-0">
+                            <span class="text-[11px] font-semibold text-amber-300">Ocultar ya registrados ese día</span>
+                        </label>
+                    </div>
 
                     <div id="batchStaffCheckboxes" class="max-h-44 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 pr-1 pt-1">
                         <!-- Injected dynamically from state.allEmployees -->
@@ -721,6 +739,6 @@
     </div>
 
     <!-- Application Script with Cache Buster -->
-    <script src="app.js?v=3.0"></script>
+    <script src="app.js?v=4.0"></script>
 </body>
 </html>

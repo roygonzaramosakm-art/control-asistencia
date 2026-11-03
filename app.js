@@ -3,12 +3,52 @@ const DEFAULT_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwKrMZbGko7N
 
 let state = {
     allEmployees: [],
+    allRecords: [],
     selectedEmployee: null,
     todayData: { registros_hoy: [], en_turno: [], kpis: {} },
     sheetsUrl: localStorage.getItem('control_asistencia_sheets_url') || DEFAULT_SHEETS_URL,
     customTimeMode: false,
+    searchStatusFilter: 'all', // 'all', 'pending', 'registered'
     userRole: localStorage.getItem('control_asistencia_user_role') || 'guard' // Options: 'guard', 'priscila', 'roy'
 };
+
+// Normaliza cualquier fecha de Google Sheets o input a formato YYYY-MM-DD
+function normalizeDateString(val) {
+    if (!val) return '';
+    const str = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const isoMatch = str.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (isoMatch) return isoMatch[1];
+    const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (dmyMatch) {
+        return `${dmyMatch[3]}-${String(dmyMatch[2]).padStart(2, '0')}-${String(dmyMatch[1]).padStart(2, '0')}`;
+    }
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    return str;
+}
+
+// Busca si el empleado ya tiene un registro en una fecha específica (YYYY-MM-DD)
+function getEmployeeRecordForDate(dni, fechaStr) {
+    if (!dni || !fechaStr) return null;
+    const cleanDni = String(dni).replace(/\s+/g, '');
+    const targetDate = normalizeDateString(fechaStr);
+    const records = state.allRecords && state.allRecords.length > 0
+        ? state.allRecords
+        : (state.todayData.registros_hoy || []);
+    // Priorizar turno activo o el último registro de esa fecha
+    const matches = records.filter(r => 
+        String(r.dni).replace(/\s+/g, '') === cleanDni &&
+        normalizeDateString(r.fecha) === targetDate
+    );
+    if (matches.length === 0) return null;
+    return matches[matches.length - 1];
+}
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
@@ -318,14 +358,26 @@ function filterEmployeesInMemory(query = '') {
 }
 
 async function loadTodayData() {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const filterDateInput = document.getElementById('filterTableDateInput');
+    if (filterDateInput && !filterDateInput.dataset.initialized) {
+        filterDateInput.value = todayStr;
+        filterDateInput.dataset.initialized = 'true';
+    }
+
     try {
         const res = await fetch('/api/asistencia/hoy');
         if (res.ok) {
             const data = await res.json();
             state.todayData = data;
+            state.allRecords = (data.registros_hoy || []).map(r => ({
+                ...r,
+                fecha: normalizeDateString(r.fecha || todayStr)
+            }));
             renderKPIs(data.kpis);
             renderActiveList(data.en_turno);
-            renderTable(data.registros_hoy);
+            applyTableFilters();
+            if (state.selectedEmployee) selectEmployee(state.selectedEmployee);
             return;
         }
     } catch (err) {}
@@ -336,12 +388,14 @@ async function loadTodayData() {
         const res = await fetch(`${state.sheetsUrl}?action=get_attendance`);
         const data = await res.json();
         if (data.status === 'success') {
-            const todayStr = new Date().toISOString().split('T')[0];
             const records = (data.data || []).map(r => ({
                 ...r,
+                fecha: normalizeDateString(r.fecha),
                 hora_ingreso: cleanTimeString(r.hora_ingreso),
                 hora_salida: cleanTimeString(r.hora_salida)
             }));
+
+            state.allRecords = records;
             
             const registros_hoy = records.filter(r => r.fecha === todayStr);
             const en_turno = records.filter(r => r.estado === 'EN_TURNO');
@@ -349,9 +403,14 @@ async function loadTodayData() {
             // Actualizar estado de empleados en memoria
             state.allEmployees.forEach(emp => {
                 const activeRec = en_turno.find(r => String(r.dni).trim() === String(emp.dni).trim());
+                const todayRec = registros_hoy.find(r => String(r.dni).trim() === String(emp.dni).trim());
                 if (activeRec) {
                     emp.estado_hoy = 'EN_TURNO';
                     emp.hora_ingreso_hoy = cleanTimeString(activeRec.hora_ingreso);
+                } else if (todayRec && todayRec.estado === 'COMPLETADO') {
+                    emp.estado_hoy = 'COMPLETADO_HOY';
+                    emp.hora_ingreso_hoy = cleanTimeString(todayRec.hora_ingreso);
+                    emp.hora_salida_hoy = cleanTimeString(todayRec.hora_salida);
                 } else {
                     emp.estado_hoy = 'FUERA';
                 }
@@ -369,22 +428,55 @@ async function loadTodayData() {
             state.todayData = { registros_hoy, en_turno, kpis };
             renderKPIs(kpis);
             renderActiveList(en_turno);
-            renderTable(registros_hoy);
+            applyTableFilters();
+            if (state.selectedEmployee) selectEmployee(state.selectedEmployee);
         }
     } catch (err) {
         console.error("Error leyendo asistencia desde Google Sheets:", err);
     }
 }
 
+// Filtro de estado en el buscador principal (Todos / Sin Registro en Fecha / Ya Registrados)
+function setSearchStatusFilter(mode) {
+    state.searchStatusFilter = mode;
+    const btnAll = document.getElementById('searchFilterAll');
+    const btnPending = document.getElementById('searchFilterPending');
+    const btnRegistered = document.getElementById('searchFilterRegistered');
+
+    const activeClass = "px-2.5 py-1 rounded-lg bg-sky-600 text-white font-bold transition-all";
+    const inactiveClass = "px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-semibold transition-all";
+
+    if (btnAll) btnAll.className = mode === 'all' ? activeClass : inactiveClass;
+    if (btnPending) btnPending.className = mode === 'pending' ? activeClass : inactiveClass;
+    if (btnRegistered) btnRegistered.className = mode === 'registered' ? activeClass : inactiveClass;
+
+    const query = searchInput ? searchInput.value.trim() : '';
+    const results = filterEmployeesInMemory(query);
+    renderSearchResults(results, query);
+}
+
+// Al cambiar la fecha manual, actualizar validación anti-duplicidad del empleado seleccionado y la tabla
+function onCustomDateChange() {
+    const customDateInput = document.getElementById('customDateInput');
+    const filterDateInput = document.getElementById('filterTableDateInput');
+    if (customDateInput && customDateInput.value && filterDateInput) {
+        filterDateInput.value = customDateInput.value;
+        applyTableFilters();
+    }
+    if (state.selectedEmployee) {
+        selectEmployee(state.selectedEmployee);
+    }
+}
+
 // Búsqueda instantánea en vivo
 function handleSearch(e) {
-    const query = e.target.value.trim();
+    const query = e.target ? e.target.value.trim() : (searchInput ? searchInput.value.trim() : '');
     const clearBtn = document.getElementById('btnClearSearch');
     if (clearBtn) {
         clearBtn.classList.toggle('hidden', !query);
     }
 
-    if (!query) {
+    if (!query && state.searchStatusFilter === 'all') {
         searchResults.classList.add('hidden');
         searchResults.style.display = 'none';
         return;
@@ -408,17 +500,27 @@ function clearSearch() {
 
 function renderSearchResults(list, query) {
     searchResults.innerHTML = '';
+    const targetDate = getSelectedDate();
 
-    if (list.length === 0) {
+    // Aplicar filtro de estado en la fecha seleccionada (Todos / Sin Registro / Ya Registrados)
+    const filteredList = list.filter(emp => {
+        const rec = getEmployeeRecordForDate(emp.dni, targetDate);
+        if (state.searchStatusFilter === 'pending') return !rec;
+        if (state.searchStatusFilter === 'registered') return Boolean(rec);
+        return true;
+    });
+
+    if (filteredList.length === 0) {
         searchResults.style.display = 'block';
         searchResults.classList.remove('hidden');
         searchResults.innerHTML = `
             <div class="p-4 text-center">
-                <p class="text-xs text-slate-400">No se encontró personal registrado con "${query}"</p>
+                <p class="text-xs text-slate-400">No se encontró personal con ese filtro para la fecha ${targetDate}</p>
+                ${query ? `
                 <button onclick="triggerQuickAdd('${query}')" class="mt-2 text-xs font-bold text-sky-400 hover:underline flex items-center justify-center gap-1 mx-auto">
                     <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
                     <span>Registrar "${query}" como nuevo personal / tercero</span>
-                </button>
+                </button>` : ''}
             </div>
         `;
         lucide.createIcons();
@@ -428,14 +530,25 @@ function renderSearchResults(list, query) {
     searchResults.style.display = 'block';
     searchResults.classList.remove('hidden');
 
-    list.forEach(emp => {
+    filteredList.forEach(emp => {
         const item = document.createElement('div');
         item.className = "p-3.5 hover:bg-sky-950/80 cursor-pointer flex items-center justify-between transition-colors bg-slate-950 border-b border-slate-800/60";
         
-        const isEnTurno = emp.estado_hoy === 'EN_TURNO';
-        const badgeBg = isEnTurno ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700';
-        const cleanTimeDisplay = cleanTimeString(emp.hora_ingreso_hoy);
-        const badgeText = isEnTurno ? `🟢 En Turno (${cleanTimeDisplay})` : '🔴 Fuera';
+        const recOnDate = getEmployeeRecordForDate(emp.dni, targetDate);
+        let badgeBg = 'bg-slate-800 text-slate-400 border-slate-700';
+        let badgeText = '🔴 Sin Registro';
+
+        if (recOnDate) {
+            const cleanIn = cleanTimeString(recOnDate.hora_ingreso);
+            const cleanOut = cleanTimeString(recOnDate.hora_salida);
+            if (recOnDate.estado === 'EN_TURNO') {
+                badgeBg = 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+                badgeText = `🟢 En Turno (${cleanIn})`;
+            } else {
+                badgeBg = 'bg-sky-500/20 text-sky-300 border-sky-500/40';
+                badgeText = `✅ Ya Registrado (${cleanIn}${cleanOut ? ' - ' + cleanOut : ''})`;
+            }
+        }
 
         const isThirdParty = emp.empresa && emp.empresa !== 'INTERNO';
         const empresaBadge = isThirdParty 
@@ -494,30 +607,49 @@ function selectEmployee(emp) {
     empEmpresaName.textContent = emp.empresa || 'INTERNO';
     empAvatar.textContent = getInitials(emp.nombre);
 
-    const isEnTurno = emp.estado_hoy === 'EN_TURNO';
-    const cleanTime = cleanTimeString(emp.hora_ingreso_hoy);
+    const targetDate = getSelectedDate();
+    const recOnDate = getEmployeeRecordForDate(emp.dni, targetDate);
 
     const doubleAlert = document.getElementById('doubleRegistrationAlert');
     const doubleAlertText = document.getElementById('doubleRegAlertText');
+    const btnCompleteShift = document.getElementById('btnSubmitCompleteManualShift');
 
-    if (isEnTurno) {
+    if (recOnDate && recOnDate.estado === 'EN_TURNO') {
+        const cleanIn = cleanTimeString(recOnDate.hora_ingreso);
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-emerald-950/80 text-emerald-300 border border-emerald-500/40";
-        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN PLANTA (DESDE ${cleanTime})</span>`;
+        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span> <span>EN TURNO (${targetDate} DESDE ${cleanIn})</span>`;
         
-        // Si está en Modo Regularización Manual, habilitar ambos botones para permitir regularizar fechas anteriores
-        btnCheckIn.disabled = !state.customTimeMode;
+        // Bloquear Ingreso duplicado y permitir Salida
+        btnCheckIn.disabled = true;
         btnCheckOut.disabled = false;
+        if (btnCompleteShift) btnCompleteShift.disabled = true;
 
         if (doubleAlert && doubleAlertText) {
-            doubleAlertText.textContent = `⚠️ Esta persona ya tiene un Ingreso registrado hoy a las ${cleanTime} y está actualmente EN TURNO.`;
-            doubleAlert.classList.toggle('hidden', state.customTimeMode);
+            doubleAlertText.textContent = `⚠️ Esta persona ya tiene un Ingreso registrado en la fecha ${targetDate} a las ${cleanIn} y está EN TURNO. Solo puede marcar SALIDA.`;
+            doubleAlert.classList.remove('hidden');
+        }
+    } else if (recOnDate && recOnDate.estado === 'COMPLETADO') {
+        const cleanIn = cleanTimeString(recOnDate.hora_ingreso);
+        const cleanOut = cleanTimeString(recOnDate.hora_salida);
+        empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-sky-950/80 text-sky-300 border border-sky-500/40";
+        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span> <span>✅ YA REGISTRADO (${targetDate})</span>`;
+
+        // Bloquear para evitar duplicidad en la misma fecha
+        btnCheckIn.disabled = true;
+        btnCheckOut.disabled = true;
+        if (btnCompleteShift) btnCompleteShift.disabled = true;
+
+        if (doubleAlert && doubleAlertText) {
+            doubleAlertText.textContent = `🚫 ANTI-DUPLICIDAD: ${emp.nombre} YA FUE REGISTRADO en la fecha ${targetDate} (Ingreso: ${cleanIn} | Salida: ${cleanOut} | Estado: COMPLETADO).`;
+            doubleAlert.classList.remove('hidden');
         }
     } else {
         empStatusBadge.className = "px-4 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 bg-slate-900 text-slate-400 border border-slate-700";
-        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span> <span>FUERA / LISTO PARA INGRESO</span>`;
+        empStatusBadge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span> <span>SIN REGISTRO EN ${targetDate} / LISTO</span>`;
         
         btnCheckIn.disabled = false;
         btnCheckOut.disabled = !state.customTimeMode;
+        if (btnCompleteShift) btnCompleteShift.disabled = false;
 
         if (doubleAlert) doubleAlert.classList.add('hidden');
     }
@@ -531,15 +663,17 @@ async function submitCheckIn() {
     const fecha = getSelectedDate();
     const exitInput = document.getElementById('customExitTimeInput');
 
-    // Si en modo manual también llenó la Hora de Salida, registrar el turno completo directamente
-    if (state.customTimeMode && state.userRole !== 'guard' && exitInput && exitInput.value) {
-        await submitCompleteManualShift();
+    // Verificar duplicidad en la fecha seleccionada (tanto hoy como en regularización de fechas pasadas)
+    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha);
+    if (existingRec) {
+        showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
+        selectEmployee(state.selectedEmployee);
         return;
     }
 
-    // Prevención de doble registro solo si es el día de hoy en tiempo real
-    if (state.selectedEmployee.estado_hoy === 'EN_TURNO' && fecha === todayStr && !state.customTimeMode) {
-        showToast(`⚠️ Registro bloqueado: ${state.selectedEmployee.nombre} ya se encuentra EN PLANTA`, 'error');
+    // Si en modo manual también llenó la Hora de Salida, registrar el turno completo directamente
+    if (state.customTimeMode && state.userRole !== 'guard' && exitInput && exitInput.value) {
+        await submitCompleteManualShift();
         return;
     }
     
@@ -620,6 +754,14 @@ async function submitCompleteManualShift() {
     const fecha = (customDateInput && customDateInput.value) ? customDateInput.value : new Date().toISOString().split('T')[0];
     const rawIngreso = customTimeInput ? customTimeInput.value : '';
     const rawSalida = customExitTimeInput ? customExitTimeInput.value : '';
+
+    // Prevención de duplicidad en la misma fecha
+    const existingRec = getEmployeeRecordForDate(state.selectedEmployee.dni, fecha);
+    if (existingRec) {
+        showToast(`🚫 Duplicidad bloqueada: ${state.selectedEmployee.nombre} ya fue registrado en la fecha ${fecha}`, 'error');
+        selectEmployee(state.selectedEmployee);
+        return;
+    }
 
     if (!rawIngreso || !rawSalida) {
         showToast('Ingresa tanto la Hora de Ingreso como la Hora de Salida para registrar el turno completo', 'error');
@@ -832,8 +974,13 @@ async function submitCheckOut(forceConfirm = false) {
     }
 }
 
-// Carga Masiva y Regularización por Días (Garita / Formatos Físicos)
+// Carga Masiva y Regularización por Días con Filtro Anti-Duplicidad
 let selectedBatchDnis = new Set();
+
+function getBatchSelectedDate() {
+    const dateInput = document.getElementById('batchDateInput');
+    return (dateInput && dateInput.value) ? dateInput.value : new Date().toISOString().split('T')[0];
+}
 
 function openBatchModal() {
     document.getElementById('batchModal').classList.remove('hidden');
@@ -845,12 +992,23 @@ function openBatchModal() {
     if (timeInput && !timeInput.value) {
         timeInput.value = new Date().toTimeString().slice(0, 5);
     }
-    renderBatchStaffList();
+    onBatchDateChange();
     lucide.createIcons();
 }
 
 function closeBatchModal() {
     document.getElementById('batchModal').classList.add('hidden');
+}
+
+function onBatchDateChange() {
+    const batchDate = getBatchSelectedDate();
+    // Desmarcar automáticamente cualquier persona que ya tenga registro en esa fecha
+    Array.from(selectedBatchDnis).forEach(dniKey => {
+        if (getEmployeeRecordForDate(dniKey, batchDate)) {
+            selectedBatchDnis.delete(dniKey);
+        }
+    });
+    renderBatchStaffList();
 }
 
 function updateBatchSelectedCount() {
@@ -862,6 +1020,12 @@ function updateBatchSelectedCount() {
 
 function toggleBatchStaffItem(dni) {
     const key = String(dni).trim();
+    const batchDate = getBatchSelectedDate();
+    const existingRec = getEmployeeRecordForDate(key, batchDate);
+    if (existingRec) {
+        showToast(`🚫 Este personal ya está registrado el día ${batchDate} (${cleanTimeString(existingRec.hora_ingreso)})`, 'error');
+        return;
+    }
     if (selectedBatchDnis.has(key)) {
         selectedBatchDnis.delete(key);
     } else {
@@ -875,9 +1039,16 @@ function toggleAllBatchStaff(selectAll) {
     const filterInput = document.getElementById('batchStaffFilter');
     const query = filterInput ? filterInput.value.trim() : '';
     const filtered = filterEmployeesInMemory(query);
+    const batchDate = getBatchSelectedDate();
 
     if (selectAll) {
-        filtered.forEach(e => selectedBatchDnis.add(String(e.dni).trim()));
+        // Solo marcar los pendientes que NO estén registrados en esa fecha
+        filtered.forEach(e => {
+            const dniKey = String(e.dni).trim();
+            if (!getEmployeeRecordForDate(dniKey, batchDate)) {
+                selectedBatchDnis.add(dniKey);
+            }
+        });
     } else {
         selectedBatchDnis.clear();
     }
@@ -889,43 +1060,79 @@ function renderBatchStaffList() {
     const container = document.getElementById('batchStaffCheckboxes');
     if (!container) return;
 
+    const batchDate = getBatchSelectedDate();
+    const hideRegisteredToggle = document.getElementById('hideAlreadyRegisteredBatchToggle');
+    const hideRegistered = hideRegisteredToggle ? hideRegisteredToggle.checked : false;
+
+    // Contar cuántos de toda la base ya están registrados en esta fecha
+    const alreadyRegisteredCount = state.allEmployees.filter(e => Boolean(getEmployeeRecordForDate(e.dni, batchDate))).length;
+    const alreadyBadge = document.getElementById('batchAlreadyRegisteredBadge');
+    if (alreadyBadge) {
+        alreadyBadge.textContent = `${alreadyRegisteredCount} ya registrados en ${batchDate}`;
+    }
+
     const filterInput = document.getElementById('batchStaffFilter');
     const query = filterInput ? filterInput.value.trim() : '';
-    const list = filterEmployeesInMemory(query);
+    let list = filterEmployeesInMemory(query);
+
+    if (hideRegistered) {
+        list = list.filter(emp => !getEmployeeRecordForDate(emp.dni, batchDate));
+    }
 
     container.innerHTML = '';
     if (list.length === 0) {
-        container.innerHTML = `<p class="text-slate-500 text-xs col-span-2 py-2 text-center">No se encontró personal con ese filtro.</p>`;
+        container.innerHTML = `<p class="text-slate-500 text-xs col-span-2 py-2 text-center">No hay personal pendiente con ese filtro para la fecha ${batchDate}.</p>`;
+        updateBatchSelectedCount();
         return;
     }
 
     list.forEach(emp => {
         const dniKey = String(emp.dni).trim();
-        const isChecked = selectedBatchDnis.has(dniKey);
+        const existingRec = getEmployeeRecordForDate(dniKey, batchDate);
+        const isChecked = selectedBatchDnis.has(dniKey) && !existingRec;
         const div = document.createElement('div');
-        div.onclick = () => toggleBatchStaffItem(dniKey);
-        div.className = `p-2 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-            isChecked 
-                ? 'bg-sky-950/80 border-sky-500/60 text-white' 
-                : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
-        }`;
 
-        const empresaTag = emp.empresa && emp.empresa !== 'INTERNO'
-            ? `<span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold">${emp.empresa}</span>`
-            : `<span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[9px]">Interno</span>`;
+        if (existingRec) {
+            const cleanIn = cleanTimeString(existingRec.hora_ingreso);
+            div.onclick = () => showToast(`🚫 ${emp.nombre} ya fue registrado el ${batchDate} (${cleanIn})`, 'error');
+            div.className = "p-2 rounded-xl border cursor-not-allowed flex items-center justify-between bg-emerald-950/30 border-emerald-500/30 text-slate-400 opacity-75";
+            div.innerHTML = `
+                <div class="flex items-center gap-2 min-w-0 pr-2">
+                    <div class="w-4 h-4 rounded flex items-center justify-center border border-emerald-500/50 bg-emerald-900/50 text-emerald-300 text-[10px] font-bold shrink-0">
+                        🔒
+                    </div>
+                    <div class="truncate">
+                        <div class="text-xs font-semibold text-slate-300 truncate">${emp.nombre}</div>
+                        <div class="text-[10px] text-emerald-400 font-mono">✅ Ya registrado (${cleanIn})</div>
+                    </div>
+                </div>
+                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold shrink-0">Registrado</span>
+            `;
+        } else {
+            div.onclick = () => toggleBatchStaffItem(dniKey);
+            div.className = `p-2 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                isChecked 
+                    ? 'bg-sky-950/80 border-sky-500/60 text-white' 
+                    : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
+            }`;
 
-        div.innerHTML = `
-            <div class="flex items-center gap-2 min-w-0 pr-2">
-                <div class="w-4 h-4 rounded flex items-center justify-center border ${isChecked ? 'bg-sky-500 border-sky-400 text-white' : 'border-slate-600 bg-slate-800'} text-[10px] font-bold shrink-0">
-                    ${isChecked ? '✓' : ''}
+            const empresaTag = emp.empresa && emp.empresa !== 'INTERNO'
+                ? `<span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-bold">${emp.empresa}</span>`
+                : `<span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[9px]">Interno</span>`;
+
+            div.innerHTML = `
+                <div class="flex items-center gap-2 min-w-0 pr-2">
+                    <div class="w-4 h-4 rounded flex items-center justify-center border ${isChecked ? 'bg-sky-500 border-sky-400 text-white' : 'border-slate-600 bg-slate-800'} text-[10px] font-bold shrink-0">
+                        ${isChecked ? '✓' : ''}
+                    </div>
+                    <div class="truncate">
+                        <div class="text-xs font-semibold truncate">${emp.nombre}</div>
+                        <div class="text-[10px] text-slate-400 font-mono">${emp.dni}</div>
+                    </div>
                 </div>
-                <div class="truncate">
-                    <div class="text-xs font-semibold truncate">${emp.nombre}</div>
-                    <div class="text-[10px] text-slate-400 font-mono">${emp.dni}</div>
-                </div>
-            </div>
-            ${empresaTag}
-        `;
+                ${empresaTag}
+            `;
+        }
         container.appendChild(div);
     });
     updateBatchSelectedCount();
@@ -942,7 +1149,6 @@ async function submitBatchCheckIn(keepOpen = false) {
     const defaultFecha = (dateInput && dateInput.value) ? dateInput.value : new Date().toISOString().split('T')[0];
     const defaultHoraIngreso = rawTime ? (rawTime.length === 5 ? rawTime + ':00' : rawTime) : new Date().toLocaleTimeString('es-ES');
     const defaultHoraSalida = rawExitTime ? (rawExitTime.length === 5 ? rawExitTime + ':00' : rawExitTime) : '';
-    const todayStr = new Date().toISOString().split('T')[0];
     const userEmail = getUserEmail();
 
     const entriesToProcess = [];
@@ -960,7 +1166,7 @@ async function submitBatchCheckIn(keepOpen = false) {
         }
     });
 
-    // 2. Líneas pegadas en el cuadro de texto (soporta DNI/Nombre simple o formato con fecha/horas separadas por coma)
+    // 2. Líneas pegadas en el cuadro de texto
     if (rawList) {
         const lines = rawList.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         for (const line of lines) {
@@ -971,14 +1177,12 @@ async function submitBatchCheckIn(keepOpen = false) {
             let lineSalida = defaultHoraSalida;
 
             if (parts.length >= 2) {
-                // Formato: YYYY-MM-DD, DNI/Nombre, HH:MM, HH:MM
                 if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
                     lineFecha = parts[0];
                     term = parts[1];
                     if (parts[2]) lineIngreso = parts[2].length === 5 ? parts[2] + ':00' : parts[2];
                     if (parts[3]) lineSalida = parts[3].length === 5 ? parts[3] + ':00' : parts[3];
                 } else {
-                    // Formato: DNI/Nombre, HH:MM, HH:MM
                     term = parts[0];
                     if (parts[1]) lineIngreso = parts[1].length === 5 ? parts[1] + ':00' : parts[1];
                     if (parts[2]) lineSalida = parts[2].length === 5 ? parts[2] + ':00' : parts[2];
@@ -1013,12 +1217,14 @@ async function submitBatchCheckIn(keepOpen = false) {
     }
 
     let registeredCount = 0;
+    let skippedDuplicateCount = 0;
 
     for (const item of entriesToProcess) {
         const { emp, fecha, horaIngreso, horaSalida } = item;
 
-        // Prevención de doble registro solo si es hoy y en turno sin hora de salida
-        if (emp.estado_hoy === 'EN_TURNO' && fecha === todayStr && !horaSalida) {
+        // Filtro Anti-Duplicidad en la misma fecha
+        if (getEmployeeRecordForDate(emp.dni, fecha)) {
+            skippedDuplicateCount++;
             continue;
         }
 
@@ -1050,17 +1256,18 @@ async function submitBatchCheckIn(keepOpen = false) {
     }
 
     playSuccessSound();
-    showToast(`✅ Día ${defaultFecha}: ${registeredCount} registros guardados (${defaultHoraSalida ? 'Turno Completo' : 'Ingreso'})`, 'success');
+    const skipMsg = skippedDuplicateCount > 0 ? ` (${skippedDuplicateCount} omitidos por estar ya registrados ese día)` : '';
+    showToast(`✅ Día ${defaultFecha}: ${registeredCount} registros guardados${skipMsg}`, 'success');
     
     selectedBatchDnis.clear();
     updateBatchSelectedCount();
-    renderBatchStaffList();
     document.getElementById('batchListInput').value = '';
 
     if (!keepOpen) {
         closeBatchModal();
     }
     await refreshAllData();
+    renderBatchStaffList();
 }
 
 function triggerQuickAdd(query) {
@@ -1142,7 +1349,36 @@ async function quickMarkExit(dni) {
     }
 }
 
-// Renderiza todos los registros del día (tanto los de EN_TURNO como COMPLETADO)
+// Filtra y renderiza la tabla inferior por Fecha y Texto
+function clearTableDateFilter() {
+    const filterDateInput = document.getElementById('filterTableDateInput');
+    if (filterDateInput) filterDateInput.value = '';
+    applyTableFilters();
+}
+
+function applyTableFilters() {
+    const filterDateInput = document.getElementById('filterTableDateInput');
+    const filterTextInput = document.getElementById('filterTableInput');
+    const targetDate = filterDateInput ? filterDateInput.value.trim() : '';
+    const query = filterTextInput ? filterTextInput.value.trim().toLowerCase() : '';
+
+    const source = (state.allRecords && state.allRecords.length > 0)
+        ? state.allRecords
+        : (state.todayData.registros_hoy || []);
+
+    const filtered = source.filter(r => {
+        const recDate = normalizeDateString(r.fecha);
+        if (targetDate && recDate !== targetDate) return false;
+        if (query) {
+            const text = `${r.nombre || ''} ${r.dni || ''} ${r.empresa || ''} ${r.notas || ''} ${r.registrado_por || ''}`.toLowerCase();
+            if (!text.includes(query)) return false;
+        }
+        return true;
+    });
+
+    renderTable(filtered.slice().reverse());
+}
+
 function renderTable(list) {
     const tbody = document.getElementById('attendanceTableBody');
     tbody.innerHTML = '';
@@ -1150,8 +1386,8 @@ function renderTable(list) {
     if (!list || list.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" class="px-4 py-8 text-center text-slate-500">
-                    No se registran marcaciones en el día de hoy.
+                <td colspan="10" class="px-4 py-8 text-center text-slate-500">
+                    No se registran marcaciones para la fecha/filtro seleccionado.
                 </td>
             </tr>
         `;
@@ -1167,10 +1403,12 @@ function renderTable(list) {
             ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">🟢 EN TURNO</span>`
             : `<span class="px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-bold border border-sky-500/30">✅ COMPLETADO</span>`;
 
+        const fechaClean = normalizeDateString(row.fecha);
         const horaIngresoClean = cleanTimeString(row.hora_ingreso);
         const horaSalidaClean = cleanTimeString(row.hora_salida);
 
         tr.innerHTML = `
+            <td class="px-4 py-3 font-mono text-amber-300 font-semibold">${fechaClean || '--'}</td>
             <td class="px-4 py-3 font-semibold text-white">${row.nombre}</td>
             <td class="px-4 py-3 font-mono text-slate-400">${row.dni}</td>
             <td class="px-4 py-3">
@@ -1188,13 +1426,7 @@ function renderTable(list) {
 }
 
 function filterHistoryTable() {
-    const query = document.getElementById('filterTableInput').value.toLowerCase();
-    const rows = document.querySelectorAll('#attendanceTableBody tr');
-
-    rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(query) ? '' : 'none';
-    });
+    applyTableFilters();
 }
 
 // Modal Handlers
